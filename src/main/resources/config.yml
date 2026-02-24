@@ -1,0 +1,60 @@
+# If empty, plugin uses <server-root>/<world-name>
+world-path: ""
+world-name: "world"
+
+# HTTP preview endpoint
+bind-host: "127.0.0.1"
+bind-port: 8156
+
+# Output image location inside plugin data folder
+output-dir: "maps"
+output-file: "overview.png"
+
+# 1 means one chunk = one pixel
+chunk-pixel-size: 1
+
+# Colors for empty/existing chunks
+empty-color: "#111827"
+land-color: "#6EE7B7"
+
+visual:
+  unknown-fog:
+    # true: chunks not persisted in region files are fully covered by empty-color
+    # false: unknown area uses disabled-color
+    enabled: true
+    disabled-color: "#dbeafe"
+
+  chunk-boundary:
+    # Show per-chunk border overlay.
+    # Best visible when chunk-pixel-size >= 2.
+    enabled: false
+    color: "#1f2937"
+
+  texture-color:
+    # true: try reading vanilla texture colors from Minecraft client jar.
+    # false: use built-in legacy color heuristics only.
+    enabled: true
+    # Optional explicit client jar path, example:
+    # C:/Users/<you>/AppData/Roaming/.minecraft/versions/1.21.4/1.21.4.jar
+    minecraft-jar: ""
+
+local-render:
+  # Full render once at startup
+  render-on-startup: true
+  
+  # Startup baseline window edge in chunks.
+  # 128 chunks = 2048 blocks.
+  startup-window-chunks: 128
+  
+  startup-predictive:
+    # true: first frame predicts terrain from world seed+generator params (biome based),
+    # then overlays generated chunks from save data.
+    enabled: true
+
+  # Interval task only consumes changed region files from watcher queue
+  auto-update:
+    enabled: true
+    interval-seconds: 10
+
+  # Watch world/region directory and enqueue changed .mca files
+  watch-region-directory: true

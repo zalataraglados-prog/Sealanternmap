@@ -1,0 +1,17 @@
+name: Sealantermap
+version: 0.1.0
+main: io.sealantermap.SealantermapPlugin
+api-version: "1.20"
+author: zalataraglados-prog
+description: Ultra-light local map renderer with manual and interval auto updates.
+
+commands:
+  slmap:
+    description: Sealantermap control command
+    usage: /slmap <status|render [force]|auto <on|off>|interval <seconds>|reload>
+    aliases: [sealantermap]
+
+permissions:
+  sealantermap.admin:
+    description: Access Sealantermap command controls
+    default: op
