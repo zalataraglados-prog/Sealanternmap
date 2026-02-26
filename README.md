@@ -25,13 +25,15 @@ Sealantermap 是一个面向 Paper 服务器的轻量地图预览插件。
 2. 构建（无全局 Maven 时）
 
 ```powershell
-I:\files\MavenWrapperArea\mvnw.cmd "-Dmaven.repo.local=I:\files\MavenWrapperArea\.m2repo" -f I:\files\Sealantermap\pom.xml clean package -DskipTests
+mvn -f pom.xml clean package -DskipTests
+# 或者使用你自己的 Maven Wrapper
+# <path-to-maven-wrapper>/mvnw.cmd -f <repo-root>/pom.xml clean package -DskipTests
 ```
 
 3. 产物
 
 ```text
-I:\files\Sealantermap\target\sealantermap-0.1.0.jar
+target/sealantermap-0.1.0.jar
 ```
 
 ## 配置要点

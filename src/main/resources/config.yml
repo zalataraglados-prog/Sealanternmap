@@ -40,8 +40,8 @@ visual:
     # true: try reading vanilla texture colors from Minecraft client jar.
     # false: use built-in legacy color heuristics only.
     enabled: true
-    # Optional explicit client jar path, example:
-    # C:/Users/<you>/AppData/Roaming/.minecraft/versions/1.21.4/1.21.4.jar
+    # Optional explicit client jar path (project-local or absolute path both work), example:
+    # ./minecraft-jars/1.21.4.jar
     minecraft-jar: ""
 
 local-render:
