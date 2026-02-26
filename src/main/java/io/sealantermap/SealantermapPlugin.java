@@ -15,15 +15,21 @@ import java.nio.file.Paths;
 import java.time.Instant;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 public final class SealantermapPlugin extends JavaPlugin {
     private HttpPreviewServer previewServer;
     private IncrementalRenderEngine renderEngine;
     private BukkitTask autoRenderTask;
+    private BukkitTask worldTimeSyncTask;
 
     private Path worldPath;
     private Path regionPath;
+    private Path outputDirPath;
+    private String outputFileStem;
+    private String outputFileExt;
     private Path outputImage;
+    private Path outputMask;
     private int chunkPixelSize;
     private int startupWindowChunks;
     private boolean startupPredictiveEnabled;
@@ -39,11 +45,19 @@ public final class SealantermapPlugin extends JavaPlugin {
     private boolean autoUpdateEnabled;
     private long autoUpdateIntervalSeconds;
     private boolean watchRegionDirectory;
+    private boolean budgetedFullRenderEnabled;
+    private int fullRenderMaxChunksPerTick;
+    private long fullRenderMaxMillisPerTick;
     private World targetWorld;
 
     private volatile RenderSnapshot latestSnapshot = RenderSnapshot.EMPTY;
     private final Object renderLock = new Object();
     private boolean renderRunning;
+    private boolean pendingRenderRequested;
+    private boolean pendingRenderForceFull;
+    private String pendingRenderReason;
+    private BukkitTask fullRenderBudgetTask;
+    private IncrementalRenderEngine.FullRenderSession fullRenderSession;
 
     @Override
     public void onEnable() {
@@ -63,39 +77,21 @@ public final class SealantermapPlugin extends JavaPlugin {
                     host,
                     port,
                     outputImage,
+                    outputMask,
                     this::requestManualRender,
-                    this::updateAutoRenderSettings
+                    this::updateAutoRenderSettings,
+                    this::updateVisualSettings,
+                    this::updateRenderQuality
             );
             previewServer.updateSnapshot(latestSnapshot);
             pushPreviewConfig();
             previewServer.start();
 
-            renderEngine = new IncrementalRenderEngine(
-                    worldPath,
-                    regionPath,
-                    outputImage,
-                    targetWorld,
-                    startupWindowChunks,
-                    startupPredictiveEnabled,
-                    texturePaletteEnabled,
-                    minecraftJarPath,
-                    chunkPixelSize,
-                    emptyColor,
-                    filledColor,
-                    unknownFogEnabled,
-                    unknownFogDisabledColor,
-                    chunkBoundaryEnabled,
-                    chunkBoundaryColor,
-                    getLogger()
-            );
-            if (watchRegionDirectory) {
-                renderEngine.startWatcher();
-            } else {
-                getLogger().warning("Region watcher disabled; incremental queue only via manual markAllDirty.");
-            }
+            rebuildRenderEngine();
 
             registerCommands();
             configureAutoRenderTask();
+            configureWorldTimeSyncTask();
 
             if (renderOnStartup) {
                 renderOnce("startup-full", true);
@@ -104,7 +100,9 @@ public final class SealantermapPlugin extends JavaPlugin {
             getLogger().info("Sealantermap ready.");
             getLogger().info("World path: " + worldPath);
             getLogger().info("Image path: " + outputImage);
+            getLogger().info("Mask path: " + outputMask);
             getLogger().info("Preview URL: http://" + host + ":" + port + "/");
+            getLogger().info("Compatibility target: Bukkit/Spigot/Paper/Purpur 1.20+");
         } catch (Exception e) {
             getLogger().severe("Failed to start Sealantermap: " + e.getMessage());
             Bukkit.getPluginManager().disablePlugin(this);
@@ -117,6 +115,11 @@ public final class SealantermapPlugin extends JavaPlugin {
             autoRenderTask.cancel();
             autoRenderTask = null;
         }
+        if (worldTimeSyncTask != null) {
+            worldTimeSyncTask.cancel();
+            worldTimeSyncTask = null;
+        }
+        cancelFullRenderBudgetTask();
         if (renderEngine != null) {
             renderEngine.stopWatcher();
             renderEngine = null;
@@ -143,6 +146,10 @@ public final class SealantermapPlugin extends JavaPlugin {
             sender.sendMessage("[Sealantermap] chunks=" + s.chunkCount + ", image=" + s.width + "x" + s.height
                     + ", regions=" + s.regionFileCount + ", playerdata=" + s.playerDataFileCount);
             sender.sendMessage("[Sealantermap] renders=" + s.renderCount + ", generated=" + formatEpochMs(s.generatedEpochMs));
+            if (targetWorld != null) {
+                long gameTime = Math.floorMod(targetWorld.getTime(), 24_000L);
+                sender.sendMessage("[Sealantermap] game-time=" + gameTime + ", phase=" + (gameTime < 12_000L ? "day" : "night"));
+            }
             return true;
         }
 
@@ -187,32 +194,10 @@ public final class SealantermapPlugin extends JavaPlugin {
             saveConfig();
             try {
                 loadRuntimeConfig();
-                if (renderEngine != null) {
-                    renderEngine.stopWatcher();
-                }
-                renderEngine = new IncrementalRenderEngine(
-                        worldPath,
-                        regionPath,
-                        outputImage,
-                        targetWorld,
-                        startupWindowChunks,
-                        startupPredictiveEnabled,
-                        texturePaletteEnabled,
-                        minecraftJarPath,
-                        chunkPixelSize,
-                        emptyColor,
-                        filledColor,
-                        unknownFogEnabled,
-                        unknownFogDisabledColor,
-                        chunkBoundaryEnabled,
-                        chunkBoundaryColor,
-                        getLogger()
-                );
-                if (watchRegionDirectory) {
-                    renderEngine.startWatcher();
-                }
+                rebuildRenderEngine();
                 pushPreviewConfig();
                 configureAutoRenderTask();
+                configureWorldTimeSyncTask();
                 triggerRenderAsync("reload-full", true);
                 sender.sendMessage("[Sealantermap] config reloaded.");
             } catch (Exception e) {
@@ -221,7 +206,21 @@ public final class SealantermapPlugin extends JavaPlugin {
             return true;
         }
 
-        sender.sendMessage("Usage: /slmap <status|render [force]|auto <on|off>|interval <seconds>|reload>");
+        if ("quality".equalsIgnoreCase(args[0])) {
+            if (args.length < 2) {
+                sender.sendMessage("Usage: /slmap quality <1|2|3|16|80>");
+                return true;
+            }
+            Integer edge = parseQualityEdge(args[1]);
+            if (edge == null) {
+                sender.sendMessage("Usage: /slmap quality <1|2|3|16|80>");
+                return true;
+            }
+            sender.sendMessage("[Sealantermap] " + updateRenderQuality(edge));
+            return true;
+        }
+
+        sender.sendMessage("Usage: /slmap <status|render [force]|auto <on|off>|interval <seconds>|quality <1|2|3|16|80>|reload>");
         return true;
     }
 
@@ -257,16 +256,44 @@ public final class SealantermapPlugin extends JavaPlugin {
         }
     }
 
+    private void configureWorldTimeSyncTask() {
+        if (worldTimeSyncTask != null) {
+            worldTimeSyncTask.cancel();
+            worldTimeSyncTask = null;
+        }
+        if (targetWorld == null || previewServer == null) {
+            return;
+        }
+        syncWorldTimeToPreview();
+        worldTimeSyncTask = getServer().getScheduler().runTaskTimer(
+                this,
+                this::syncWorldTimeToPreview,
+                20L,
+                20L
+        );
+    }
+
+    private void syncWorldTimeToPreview() {
+        if (targetWorld == null || previewServer == null) {
+            return;
+        }
+        long gameTime = Math.floorMod(targetWorld.getTime(), 24_000L);
+        previewServer.updateGameTime(gameTime, gameTime < 12_000L);
+    }
+
     private void triggerRenderAsync(String reason, boolean forceFull) {
-        getServer().getScheduler().runTask(this, () -> renderOnce(reason, forceFull));
+        getServer().getScheduler().runTask(this, () -> {
+            if (forceFull && budgetedFullRenderEnabled) {
+                startBudgetedFullRender(reason);
+            } else {
+                renderOnce(reason, forceFull);
+            }
+        });
     }
 
     private void renderOnce(String reason, boolean forceFull) {
-        synchronized (renderLock) {
-            if (renderRunning) {
-                return;
-            }
-            renderRunning = true;
+        if (!acquireRenderSlotOrQueue(reason, forceFull)) {
+            return;
         }
 
         long startedNs = System.nanoTime();
@@ -305,10 +332,136 @@ public final class SealantermapPlugin extends JavaPlugin {
             ));
             getLogger().warning("Render failed (" + reason + "): " + e.getMessage());
         } finally {
-            synchronized (renderLock) {
-                renderRunning = false;
+            finishRenderCycleAndMaybeRerun();
+        }
+    }
+
+    private void startBudgetedFullRender(String reason) {
+        if (!acquireRenderSlotOrQueue(reason, true)) {
+            return;
+        }
+        try {
+            if (renderEngine == null) {
+                throw new IllegalStateException("render engine not initialized");
+            }
+            cancelFullRenderBudgetTask();
+            fullRenderSession = renderEngine.beginFullRenderSession(reason);
+            updateSnapshot(new RenderSnapshot(
+                    "running",
+                    reason,
+                    "full render queued (budget mode)",
+                    System.currentTimeMillis(),
+                    latestSnapshot.width,
+                    latestSnapshot.height,
+                    latestSnapshot.chunkCount,
+                    latestSnapshot.regionFileCount,
+                    latestSnapshot.playerDataFileCount,
+                    latestSnapshot.renderCount
+            ));
+
+            fullRenderBudgetTask = getServer().getScheduler().runTaskTimer(this, () -> {
+                runBudgetedFullRenderStep(reason);
+            }, 1L, 1L);
+        } catch (Exception e) {
+            updateSnapshot(new RenderSnapshot(
+                    "error",
+                    reason,
+                    e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage(),
+                    System.currentTimeMillis(),
+                    latestSnapshot.width,
+                    latestSnapshot.height,
+                    latestSnapshot.chunkCount,
+                    latestSnapshot.regionFileCount,
+                    latestSnapshot.playerDataFileCount,
+                    latestSnapshot.renderCount
+            ));
+            getLogger().warning("Budgeted full render failed to start (" + reason + "): " + e.getMessage());
+            cancelFullRenderBudgetTask();
+            finishRenderCycleAndMaybeRerun();
+        }
+    }
+
+    private void runBudgetedFullRenderStep(String reason) {
+        if (renderEngine == null || fullRenderSession == null) {
+            cancelFullRenderBudgetTask();
+            finishRenderCycleAndMaybeRerun();
+            return;
+        }
+        try {
+            IncrementalRenderEngine.FullRenderStepResult step = renderEngine.stepFullRenderSession(
+                    fullRenderSession,
+                    fullRenderMaxChunksPerTick,
+                    fullRenderMaxMillisPerTick
+            );
+            updateSnapshot(step.snapshot);
+            if (step.done) {
+                cancelFullRenderBudgetTask();
+                if ("ok".equals(step.snapshot.status)) {
+                    getLogger().info("Budgeted full render done (" + reason + "), chunks="
+                            + step.snapshot.chunkCount + ", image=" + step.snapshot.width + "x" + step.snapshot.height);
+                }
+                finishRenderCycleAndMaybeRerun();
+            }
+        } catch (Exception e) {
+            updateSnapshot(new RenderSnapshot(
+                    "error",
+                    reason,
+                    e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage(),
+                    System.currentTimeMillis(),
+                    latestSnapshot.width,
+                    latestSnapshot.height,
+                    latestSnapshot.chunkCount,
+                    latestSnapshot.regionFileCount,
+                    latestSnapshot.playerDataFileCount,
+                    latestSnapshot.renderCount
+            ));
+            getLogger().warning("Budgeted full render failed (" + reason + "): " + e.getMessage());
+            cancelFullRenderBudgetTask();
+            finishRenderCycleAndMaybeRerun();
+        }
+    }
+
+    private boolean acquireRenderSlotOrQueue(String reason, boolean forceFull) {
+        synchronized (renderLock) {
+            if (renderRunning) {
+                pendingRenderRequested = true;
+                pendingRenderForceFull = pendingRenderForceFull || forceFull;
+                pendingRenderReason = reason;
+                return false;
+            }
+            renderRunning = true;
+            return true;
+        }
+    }
+
+    private void finishRenderCycleAndMaybeRerun() {
+        boolean rerun = false;
+        boolean rerunForce = false;
+        String rerunReason = null;
+        synchronized (renderLock) {
+            renderRunning = false;
+            if (pendingRenderRequested) {
+                rerun = true;
+                rerunForce = pendingRenderForceFull;
+                rerunReason = (pendingRenderReason == null || pendingRenderReason.isBlank())
+                        ? "queued-render"
+                        : pendingRenderReason;
+                pendingRenderRequested = false;
+                pendingRenderForceFull = false;
+                pendingRenderReason = null;
             }
         }
+        if (rerun) {
+            triggerRenderAsync(rerunReason, rerunForce);
+        }
+    }
+
+    private void cancelFullRenderBudgetTask() {
+        if (fullRenderBudgetTask != null) {
+            fullRenderBudgetTask.cancel();
+            fullRenderBudgetTask = null;
+        }
+        fullRenderSession = null;
     }
 
     private void updateSnapshot(RenderSnapshot snapshot) {
@@ -322,6 +475,7 @@ public final class SealantermapPlugin extends JavaPlugin {
         if (previewServer == null) {
             return;
         }
+        previewServer.updateImagePaths(outputImage, outputMask);
         previewServer.updateVisualConfig(
                 unknownFogEnabled,
                 chunkBoundaryEnabled,
@@ -344,9 +498,30 @@ public final class SealantermapPlugin extends JavaPlugin {
             throw new IllegalStateException("Bukkit world not loaded: " + worldName);
         }
 
-        Path outputDir = getDataFolder().toPath().resolve(getConfig().getString("output-dir", "maps"));
-        outputImage = outputDir.resolve(getConfig().getString("output-file", "overview.png"));
-        chunkPixelSize = Math.max(1, getConfig().getInt("chunk-pixel-size", 1));
+        outputDirPath = getDataFolder().toPath().resolve(getConfig().getString("output-dir", "maps"));
+        String outputFileRaw = getConfig().getString("output-file", "overview.png");
+        if (outputFileRaw == null || outputFileRaw.isBlank()) {
+            outputFileRaw = "overview.png";
+        }
+        String outputFileName = Paths.get(outputFileRaw.trim()).getFileName().toString();
+        int dot = outputFileName.lastIndexOf('.');
+        if (dot > 0 && dot < outputFileName.length() - 1) {
+            outputFileStem = outputFileName.substring(0, dot);
+            outputFileExt = outputFileName.substring(dot);
+        } else {
+            outputFileStem = outputFileName;
+            outputFileExt = ".png";
+        }
+        int configuredEdge = Math.max(1, getConfig().getInt("chunk-pixel-size", 1));
+        Integer normalizedEdge = normalizeQualityEdge(configuredEdge);
+        if (normalizedEdge == null) {
+            chunkPixelSize = configuredEdge >= 16 ? 16 : 1;
+            getConfig().set("chunk-pixel-size", chunkPixelSize);
+            saveConfig();
+        } else {
+            chunkPixelSize = normalizedEdge;
+        }
+        refreshOutputPathsForCurrentQuality();
         startupWindowChunks = Math.max(0, getConfig().getInt("local-render.startup-window-chunks", 128));
         startupPredictiveEnabled = getConfig().getBoolean("local-render.startup-predictive.enabled", true);
         texturePaletteEnabled = getConfig().getBoolean("visual.texture-color.enabled", true);
@@ -359,15 +534,70 @@ public final class SealantermapPlugin extends JavaPlugin {
                 new Color(0xDB, 0xEA, 0xFE)
         );
         chunkBoundaryEnabled = getConfig().getBoolean("visual.chunk-boundary.enabled", false);
+        String boundaryRaw = getConfig().getString("visual.chunk-boundary.color", "#00e5ff");
+        // Migrate legacy dark default to vivid cyan for better boundary readability.
+        if (boundaryRaw != null && boundaryRaw.trim().equalsIgnoreCase("#1f2937")) {
+            boundaryRaw = "#00e5ff";
+            getConfig().set("visual.chunk-boundary.color", boundaryRaw);
+            saveConfig();
+        }
         chunkBoundaryColor = parseHexColor(
-                getConfig().getString("visual.chunk-boundary.color", "#1f2937"),
-                new Color(0x1F, 0x29, 0x37)
+                boundaryRaw,
+                new Color(0x00, 0xE5, 0xFF)
         );
 
         renderOnStartup = getConfig().getBoolean("local-render.render-on-startup", true);
         autoUpdateEnabled = getConfig().getBoolean("local-render.auto-update.enabled", true);
-        autoUpdateIntervalSeconds = Math.max(2L, getConfig().getLong("local-render.auto-update.interval-seconds", 10L));
+        autoUpdateIntervalSeconds = Math.max(2L, getConfig().getLong("local-render.auto-update.interval-seconds", 30L));
         watchRegionDirectory = getConfig().getBoolean("local-render.watch-region-directory", true);
+        budgetedFullRenderEnabled = getConfig().getBoolean("local-render.full-render-budget.enabled", true);
+        fullRenderMaxChunksPerTick = Math.max(
+                1,
+                getConfig().getInt("local-render.full-render-budget.max-chunks-per-tick", 64)
+        );
+        fullRenderMaxMillisPerTick = Math.max(
+                1L,
+                getConfig().getLong("local-render.full-render-budget.max-millis-per-tick", 12L)
+        );
+    }
+
+    private void rebuildRenderEngine() throws Exception {
+        if (renderEngine != null) {
+            renderEngine.stopWatcher();
+        }
+        refreshOutputPathsForCurrentQuality();
+        renderEngine = new IncrementalRenderEngine(
+                worldPath,
+                regionPath,
+                outputImage,
+                outputMask,
+                targetWorld,
+                startupWindowChunks,
+                startupPredictiveEnabled,
+                texturePaletteEnabled,
+                minecraftJarPath,
+                chunkPixelSize,
+                emptyColor,
+                filledColor,
+                false,
+                unknownFogDisabledColor,
+                false,
+                chunkBoundaryColor,
+                getLogger()
+        );
+        if (watchRegionDirectory) {
+            renderEngine.startWatcher();
+        } else {
+            getLogger().warning("Region watcher disabled; incremental queue only via manual markAllDirty.");
+        }
+        if (previewServer != null) {
+            previewServer.updateImagePaths(outputImage, outputMask);
+        }
+    }
+
+    private void refreshOutputPathsForCurrentQuality() {
+        outputImage = outputDirPath.resolve(outputFileStem + "-q" + chunkPixelSize + outputFileExt);
+        outputMask = outputDirPath.resolve(outputFileStem + "-mask-q" + chunkPixelSize + ".png");
     }
 
     private Path resolveWorldPath() {
@@ -431,6 +661,80 @@ public final class SealantermapPlugin extends JavaPlugin {
         });
     }
 
+    private String updateVisualSettings(String name, Boolean enabled) {
+        if (name == null || name.isBlank() || enabled == null) {
+            return "invalid visual toggle";
+        }
+        String key = name.trim().toLowerCase();
+        if (!"unknownfog".equals(key)
+                && !"chunkboundary".equals(key)
+                && !"predictivestartup".equals(key)
+                && !"texturepalette".equals(key)) {
+            return "unknown visual toggle: " + name;
+        }
+
+        boolean target = enabled;
+        getServer().getScheduler().runTask(this, () -> applyVisualSettingsOnMainThread(key, target));
+        return "scheduled " + key + "=" + target;
+    }
+
+    private void applyVisualSettingsOnMainThread(String key, boolean enabled) {
+        switch (key) {
+            case "unknownfog" -> {
+                unknownFogEnabled = enabled;
+                getConfig().set("visual.unknown-fog.enabled", unknownFogEnabled);
+            }
+            case "chunkboundary" -> {
+                chunkBoundaryEnabled = enabled;
+                getConfig().set("visual.chunk-boundary.enabled", chunkBoundaryEnabled);
+            }
+            case "predictivestartup" -> {
+                startupPredictiveEnabled = enabled;
+                getConfig().set("local-render.startup-predictive.enabled", startupPredictiveEnabled);
+            }
+            case "texturepalette" -> {
+                texturePaletteEnabled = enabled;
+                getConfig().set("visual.texture-color.enabled", texturePaletteEnabled);
+            }
+            default -> {
+                return;
+            }
+        }
+
+        saveConfig();
+        pushPreviewConfig();
+    }
+
+    private String updateRenderQuality(Integer edge) {
+        if (edge == null) {
+            return "invalid quality edge";
+        }
+        return runOnMainThreadAndWait(() -> applyRenderQualityOnMainThread(edge));
+    }
+
+    private String applyRenderQualityOnMainThread(int edge) {
+        Integer normalized = normalizeQualityEdge(edge);
+        if (normalized == null) {
+            return "quality must be one of: 1,2,3,16,80";
+        }
+        if (chunkPixelSize == normalized) {
+            return "quality unchanged: " + qualityLabel(normalized);
+        }
+
+        chunkPixelSize = normalized;
+        getConfig().set("chunk-pixel-size", chunkPixelSize);
+        saveConfig();
+        try {
+            refreshOutputPathsForCurrentQuality();
+            rebuildRenderEngine();
+            pushPreviewConfig();
+            triggerRenderAsync("quality-full-web", true);
+            return "quality switched to " + qualityLabel(chunkPixelSize) + ", full render queued";
+        } catch (Exception e) {
+            return "quality switch failed: " + e.getMessage();
+        }
+    }
+
     private String runOnMainThreadAndWait(java.util.function.Supplier<String> action) {
         if (Bukkit.isPrimaryThread()) {
             return action.get();
@@ -444,7 +748,9 @@ public final class SealantermapPlugin extends JavaPlugin {
             }
         });
         try {
-            return future.get(5, TimeUnit.SECONDS);
+            return future.get(30, TimeUnit.SECONDS);
+        } catch (TimeoutException e) {
+            return "failed: timeout waiting for server main thread";
         } catch (Exception e) {
             return "failed: " + e.getMessage();
         }
@@ -474,6 +780,32 @@ public final class SealantermapPlugin extends JavaPlugin {
         } catch (Exception ignored) {
             return null;
         }
+    }
+
+    private static Integer parseQualityEdge(String raw) {
+        try {
+            return normalizeQualityEdge(Integer.parseInt(raw.trim()));
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private static Integer normalizeQualityEdge(int edge) {
+        if (edge == 1 || edge == 2 || edge == 3 || edge == 16 || edge == 80) {
+            return edge;
+        }
+        return null;
+    }
+
+    private static String qualityLabel(int edge) {
+        return switch (edge) {
+            case 1 -> "chunk-1px";
+            case 2 -> "chunk-4px";
+            case 3 -> "chunk-9px";
+            case 16 -> "block-1px";
+            case 80 -> "block-25px";
+            default -> "custom-" + edge + "px";
+        };
     }
 
     private static String colorToHex(Color color) {

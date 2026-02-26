@@ -10,7 +10,12 @@ bind-port: 8156
 output-dir: "maps"
 output-file: "overview.png"
 
-# 1 means one chunk = one pixel
+# Render detail edge per chunk:
+# 1  = 1 pixel/chunk
+# 2  = 4 pixels/chunk (2x2)
+# 3  = 9 pixels/chunk (3x3)
+# 16 = 1 pixel/block (16x16), best for large building roofs but heaviest
+# 80 = 25 pixels/block (80x80 per chunk, 5x5 per block), inspection mode
 chunk-pixel-size: 1
 
 # Colors for empty/existing chunks
@@ -28,7 +33,8 @@ visual:
     # Show per-chunk border overlay.
     # Best visible when chunk-pixel-size >= 2.
     enabled: false
-    color: "#1f2937"
+    # Vivid cyan works better with overlay blending on most terrain tones.
+    color: "#00e5ff"
 
   texture-color:
     # true: try reading vanilla texture colors from Minecraft client jar.
@@ -54,7 +60,15 @@ local-render:
   # Interval task only consumes changed region files from watcher queue
   auto-update:
     enabled: true
-    interval-seconds: 10
+    interval-seconds: 30
 
   # Watch world/region directory and enqueue changed .mca files
   watch-region-directory: true
+
+  # Run forced full render in budget mode to avoid long single-tick stalls.
+  full-render-budget:
+    enabled: true
+    # Per tick chunk draw budget for full-render session.
+    max-chunks-per-tick: 64
+    # Hard time budget per tick (ms) for full-render session.
+    max-millis-per-tick: 12

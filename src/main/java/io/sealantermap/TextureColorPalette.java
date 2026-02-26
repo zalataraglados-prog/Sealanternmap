@@ -92,29 +92,80 @@ final class TextureColorPalette {
     }
 
     private static Integer averageOpaqueColor(BufferedImage img) {
-        long r = 0;
-        long g = 0;
-        long b = 0;
-        long n = 0;
+        // Use dominant opaque color instead of plain average:
+        // Minecraft textures often include dark outlines/shadows that make average colors muddy.
+        Map<Integer, Bucket> buckets = new HashMap<>();
+        long totalOpaque = 0;
         int width = img.getWidth();
         int height = img.getHeight();
         for (int y = 0; y < height; y++) {
             for (int x = 0; x < width; x++) {
                 int argb = img.getRGB(x, y);
                 int a = (argb >>> 24) & 0xFF;
-                if (a < 16) {
+                if (a < 24) {
                     continue;
                 }
-                r += (argb >>> 16) & 0xFF;
-                g += (argb >>> 8) & 0xFF;
-                b += argb & 0xFF;
-                n++;
+                int r = (argb >>> 16) & 0xFF;
+                int g = (argb >>> 8) & 0xFF;
+                int b = argb & 0xFF;
+
+                float[] hsb = Color.RGBtoHSB(r, g, b, null);
+                // Ignore near-black pixels (most are texture outlines).
+                if (hsb[2] < 0.10f) {
+                    continue;
+                }
+
+                int qR = r >> 3;
+                int qG = g >> 3;
+                int qB = b >> 3;
+                int key = (qR << 10) | (qG << 5) | qB;
+
+                int weight = 1 + (int) (hsb[1] * 3.0f) + (int) (hsb[2] * 2.0f);
+                Bucket bucket = buckets.computeIfAbsent(key, ignored -> new Bucket());
+                bucket.weight += weight;
+                bucket.r += (long) r * weight;
+                bucket.g += (long) g * weight;
+                bucket.b += (long) b * weight;
+                totalOpaque++;
             }
         }
-        if (n == 0) {
+        if (buckets.isEmpty() || totalOpaque == 0) {
             return null;
         }
-        return new Color((int) (r / n), (int) (g / n), (int) (b / n)).getRGB();
+
+        Bucket best = null;
+        for (Bucket bucket : buckets.values()) {
+            if (best == null || bucket.weight > best.weight) {
+                best = bucket;
+            }
+        }
+        if (best == null || best.weight <= 0) {
+            return null;
+        }
+
+        int r = clamp((int) (best.r / best.weight));
+        int g = clamp((int) (best.g / best.weight));
+        int b = clamp((int) (best.b / best.weight));
+        return enhanceReadability(r, g, b);
+    }
+
+    private static int enhanceReadability(int r, int g, int b) {
+        float[] hsb = Color.RGBtoHSB(r, g, b, null);
+        // Slightly boost saturation/brightness for map readability.
+        float sat = Math.min(1.0f, hsb[1] * 1.15f + 0.03f);
+        float bri = Math.min(1.0f, Math.max(0.18f, hsb[2] * 1.08f));
+        return Color.HSBtoRGB(hsb[0], sat, bri);
+    }
+
+    private static int clamp(int value) {
+        return Math.max(0, Math.min(255, value));
+    }
+
+    private static final class Bucket {
+        long r;
+        long g;
+        long b;
+        long weight;
     }
 
     private static List<String> textureCandidates(Material material) {

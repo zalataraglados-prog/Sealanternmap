@@ -3,7 +3,7 @@ version: 0.1.0
 main: io.sealantermap.SealantermapPlugin
 api-version: "1.20"
 author: zalataraglados-prog
-description: Ultra-light local map renderer with manual and interval auto updates.
+description: Ultra-light local map renderer for Bukkit-family servers with manual and interval auto updates.
 
 commands:
   slmap:

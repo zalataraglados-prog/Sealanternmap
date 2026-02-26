@@ -9,27 +9,27 @@
   <packaging>jar</packaging>
 
   <name>Sealantermap</name>
-  <description>Ultra-light world overview snapshot plugin for Paper</description>
+  <description>Ultra-light world overview snapshot plugin for Bukkit-family servers</description>
 
   <properties>
     <maven.compiler.source>17</maven.compiler.source>
     <maven.compiler.target>17</maven.compiler.target>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <paper.api.version>1.20.6-R0.1-SNAPSHOT</paper.api.version>
+    <spigot.api.version>1.20.6-R0.1-SNAPSHOT</spigot.api.version>
   </properties>
 
   <repositories>
     <repository>
-      <id>papermc-repo</id>
-      <url>https://repo.papermc.io/repository/maven-public/</url>
+      <id>spigotmc-repo</id>
+      <url>https://hub.spigotmc.org/nexus/content/repositories/snapshots/</url>
     </repository>
   </repositories>
 
   <dependencies>
     <dependency>
-      <groupId>io.papermc.paper</groupId>
-      <artifactId>paper-api</artifactId>
-      <version>${paper.api.version}</version>
+      <groupId>org.spigotmc</groupId>
+      <artifactId>spigot-api</artifactId>
+      <version>${spigot.api.version}</version>
       <scope>provided</scope>
     </dependency>
   </dependencies>
