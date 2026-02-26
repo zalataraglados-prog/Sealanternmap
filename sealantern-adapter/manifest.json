@@ -1,0 +1,24 @@
+{
+  "id": "sealantermap-bridge",
+  "name": "Sealantermap Bridge",
+  "version": "0.1.0",
+  "description": "Embed Sealantermap web preview into SeaLantern as an in-app floating panel.",
+  "author": {
+    "name": "zalataraglados-prog",
+    "url": "https://github.com/zalataraglados-prog/Sealanternmap"
+  },
+  "main": "main.lua",
+  "repository": "https://github.com/zalataraglados-prog/Sealanternmap",
+  "permissions": [
+    "log",
+    "ui"
+  ],
+  "ui": {
+    "sidebar": {
+      "label": "Map Bridge",
+      "icon": "map",
+      "priority": 80
+    }
+  }
+}
+

@@ -1,0 +1,22 @@
+{
+  "id": "sealantermap-bridge",
+  "repo": "zalataraglados-prog/Sealanternmap",
+  "name": {
+    "zh-CN": "Sealantermap 海晶灯适配器",
+    "en-US": "Sealantermap Bridge"
+  },
+  "description": {
+    "zh-CN": "在 SeaLantern 内嵌 Sealantermap 预览窗口。",
+    "en-US": "Embed Sealantermap preview panel inside SeaLantern."
+  },
+  "permissions": [
+    "log",
+    "ui"
+  ],
+  "categories": [
+    "utility"
+  ],
+  "download_type": "source",
+  "branch": "main"
+}
+
