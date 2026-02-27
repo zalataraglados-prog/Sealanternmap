@@ -1,35 +1,55 @@
-# Sealantermap SeaLantern Adapter
+# Sealantermap SeaLantern Adapter (One-Package)
 
-This folder contains a **SeaLantern app plugin** (Lua) that embeds Sealantermap web preview into SeaLantern UI.
+This folder provides a **single SeaLantern plugin package** that handles two parts:
 
-## What it does
+1. **SeaLantern UI integration**
+- Adds a floating `Map` button.
+- Opens an in-app map panel (iframe to `http://127.0.0.1:8156/`).
 
-- Adds a floating `Map` button in SeaLantern.
-- Opens an in-app panel with an iframe pointing to Sealantermap preview URL.
-- Keeps implementation lightweight and isolated from server-side render logic.
+2. **Game server core installation**
+- Bundles `sealantermap-0.1.0.jar` as payload.
+- Installs/updates that jar into selected server `plugins` folder by calling SeaLantern `m_install_plugin`.
 
-## Default preview URL
+## Why this is "one plugin"
 
-- `http://127.0.0.1:8156/`
+User installs only one SeaLantern plugin zip.
+Inside that zip, the adapter contains the game-side jar payload and installs it when requested from the panel.
 
-If your Sealantermap uses a different port, edit `PREVIEW_URL` in `main.lua`.
+## Package layout
 
-## Permissions used
+- `manifest.json`
+- `main.lua`
+- `payload/sealantermap-0.1.0.jar`
+
+## Required permissions
 
 - `log`
 - `ui`
+- `fs` (read payload from plugin data)
+- `server` (list servers)
 
-No file write, process execution, or network permission is required.
+## Build package
+
+```powershell
+.\package.ps1
+```
+
+Output:
+
+```text
+sealantermap-bridge-sealantern.zip
+```
 
 ## Install in SeaLantern
 
-1. Zip the files in this folder (`manifest.json`, `main.lua`) as a plugin package.
-2. Open SeaLantern -> Plugins.
-3. Install from zip.
-4. Enable plugin `sealantermap-bridge`.
+1. Open SeaLantern -> Plugins.
+2. Install from zip: `sealantermap-bridge-sealantern.zip`.
+3. Enable plugin `sealantermap-bridge`.
+4. Click floating `Map` button.
+5. Select a server and click `Install/Update Core`.
+6. Restart that Minecraft server once.
 
 ## Notes
 
-- This adapter is for **SeaLantern UI integration** only.
-- Actual map rendering is still handled by the Bukkit/Paper-side Sealantermap plugin.
-
+- This adapter does not replace Sealantermap core logic.
+- It only manages installation + panel embedding in SeaLantern.

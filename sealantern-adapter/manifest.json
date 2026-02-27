@@ -1,8 +1,8 @@
 {
   "id": "sealantermap-bridge",
   "name": "Sealantermap Bridge",
-  "version": "0.1.0",
-  "description": "Embed Sealantermap web preview into SeaLantern as an in-app floating panel.",
+  "version": "0.2.0",
+  "description": "One-package Sealantermap adapter: install map core jar to game server and embed preview panel in SeaLantern.",
   "author": {
     "name": "zalataraglados-prog",
     "url": "https://github.com/zalataraglados-prog/Sealanternmap"
@@ -11,7 +11,12 @@
   "repository": "https://github.com/zalataraglados-prog/Sealanternmap",
   "permissions": [
     "log",
-    "ui"
+    "ui",
+    "fs",
+    "server"
+  ],
+  "include": [
+    "payload"
   ],
   "ui": {
     "sidebar": {
@@ -21,4 +26,3 @@
     }
   }
 }
-

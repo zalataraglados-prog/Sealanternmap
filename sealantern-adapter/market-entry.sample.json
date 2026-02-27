@@ -6,12 +6,14 @@
     "en-US": "Sealantermap Bridge"
   },
   "description": {
-    "zh-CN": "在 SeaLantern 内嵌 Sealantermap 预览窗口。",
-    "en-US": "Embed Sealantermap preview panel inside SeaLantern."
+    "zh-CN": "单插件适配：在 SeaLantern 内嵌地图预览，并可一键安装/更新 Sealantermap 核心到目标服务器。",
+    "en-US": "One-package adapter: embed map preview in SeaLantern and install/update Sealantermap core jar to selected server."
   },
   "permissions": [
     "log",
-    "ui"
+    "ui",
+    "fs",
+    "server"
   ],
   "categories": [
     "utility"
@@ -19,4 +21,3 @@
   "download_type": "source",
   "branch": "main"
 }
-
