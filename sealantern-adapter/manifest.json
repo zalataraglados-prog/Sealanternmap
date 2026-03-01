@@ -18,11 +18,5 @@
   "include": [
     "payload"
   ],
-  "ui": {
-    "sidebar": {
-      "label": "Map Bridge",
-      "icon": "map",
-      "priority": 80
-    }
-  }
+  "ui": {}
 }
