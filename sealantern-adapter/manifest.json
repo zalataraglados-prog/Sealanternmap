@@ -1,7 +1,7 @@
 {
   "id": "sealantermap-bridge",
   "name": "Sealantermap Bridge",
-  "version": "0.2.0",
+  "version": "0.2.2",
   "description": "One-package Sealantermap adapter: install map core jar to game server and embed preview panel in SeaLantern.",
   "author": {
     "name": "zalataraglados-prog",
@@ -10,7 +10,7 @@
   "main": "main.lua",
   "repository": "https://github.com/zalataraglados-prog/Sealanternmap",
   "permissions": [
-    "log",
+    "console",
     "ui",
     "fs",
     "server"
