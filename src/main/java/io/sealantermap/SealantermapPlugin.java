@@ -39,6 +39,9 @@ public final class SealantermapPlugin extends JavaPlugin {
     private Color filledColor;
     private boolean unknownFogEnabled;
     private Color unknownFogDisabledColor;
+    // Deprecated compatibility fields:
+    // - kept so legacy config keys and /stats.json schema remain readable
+    // - no longer used to drive any frontend or backend boundary rendering behavior
     private boolean chunkBoundaryEnabled;
     private Color chunkBoundaryColor;
     private boolean renderOnStartup;
@@ -523,23 +526,62 @@ public final class SealantermapPlugin extends JavaPlugin {
         }
         refreshOutputPathsForCurrentQuality();
         startupWindowChunks = Math.max(0, getConfig().getInt("local-render.startup-window-chunks", 128));
-        startupPredictiveEnabled = getConfig().getBoolean("local-render.startup-predictive.enabled", true);
-        texturePaletteEnabled = getConfig().getBoolean("visual.texture-color.enabled", true);
+        boolean legacyPredictiveEnabled = getConfig().getBoolean("local-render.startup-predictive.enabled", true);
+        /*
+         * Startup predictive rendering is now forced ON.
+         * Keep config key only for backward compatibility and migrate false -> true.
+         */
+        startupPredictiveEnabled = true;
+        if (!legacyPredictiveEnabled) {
+            getConfig().set("local-render.startup-predictive.enabled", true);
+            saveConfig();
+            getLogger().info("local-render.startup-predictive.enabled=false is deprecated and ignored (forced true).");
+        }
+        boolean legacyTexturePaletteEnabled = getConfig().getBoolean("visual.texture-color.enabled", true);
+        /*
+         * Texture palette is fixed ON.
+         * Frontend toggle has been removed; backend runtime always keeps this enabled.
+         * Keep config key only for backward compatibility and migrate false -> true.
+         */
+        texturePaletteEnabled = true;
+        if (!legacyTexturePaletteEnabled) {
+            getConfig().set("visual.texture-color.enabled", true);
+            saveConfig();
+            getLogger().info("visual.texture-color.enabled=false is deprecated and ignored (forced true).");
+        }
         minecraftJarPath = getConfig().getString("visual.texture-color.minecraft-jar", "").trim();
         emptyColor = parseHexColor(getConfig().getString("empty-color", "#111827"), new Color(0x11, 0x18, 0x27));
         filledColor = parseHexColor(getConfig().getString("land-color", "#6EE7B7"), new Color(0x6E, 0xE7, 0xB7));
         unknownFogEnabled = getConfig().getBoolean("visual.unknown-fog.enabled", true);
+        String unknownFogDisabledRaw = getConfig().getString("visual.unknown-fog.disabled-color", "#ffffff");
+        // Migrate legacy light-blue background default to pure white.
+        if (unknownFogDisabledRaw != null && unknownFogDisabledRaw.trim().equalsIgnoreCase("#dbeafe")) {
+            unknownFogDisabledRaw = "#ffffff";
+            getConfig().set("visual.unknown-fog.disabled-color", unknownFogDisabledRaw);
+            saveConfig();
+        }
         unknownFogDisabledColor = parseHexColor(
-                getConfig().getString("visual.unknown-fog.disabled-color", "#dbeafe"),
-                new Color(0xDB, 0xEA, 0xFE)
+                unknownFogDisabledRaw,
+                new Color(0xFF, 0xFF, 0xFF)
         );
-        chunkBoundaryEnabled = getConfig().getBoolean("visual.chunk-boundary.enabled", false);
+        boolean legacyChunkBoundaryEnabled = getConfig().getBoolean("visual.chunk-boundary.enabled", false);
         String boundaryRaw = getConfig().getString("visual.chunk-boundary.color", "#00e5ff");
         // Migrate legacy dark default to vivid cyan for better boundary readability.
         if (boundaryRaw != null && boundaryRaw.trim().equalsIgnoreCase("#1f2937")) {
             boundaryRaw = "#00e5ff";
             getConfig().set("visual.chunk-boundary.color", boundaryRaw);
             saveConfig();
+        }
+        /*
+         * Chunk-boundary overlay is retired.
+         *
+         * We still parse and keep color/settings for backward compatibility with old
+         * configs and old clients that may read these fields from stats. Runtime behavior
+         * is forced to "disabled" so no render path can re-enable boundary overlays.
+         */
+        chunkBoundaryEnabled = false;
+        if (legacyChunkBoundaryEnabled) {
+            getLogger().info("visual.chunk-boundary.enabled is deprecated and ignored (forced false).");
         }
         chunkBoundaryColor = parseHexColor(
                 boundaryRaw,
@@ -666,10 +708,16 @@ public final class SealantermapPlugin extends JavaPlugin {
             return "invalid visual toggle";
         }
         String key = name.trim().toLowerCase();
-        if (!"unknownfog".equals(key)
-                && !"chunkboundary".equals(key)
-                && !"predictivestartup".equals(key)
-                && !"texturepalette".equals(key)) {
+        if ("chunkboundary".equals(key)) {
+            return "chunkboundary is deprecated: overlay removed from frontend and backend renderer";
+        }
+        if ("texturepalette".equals(key)) {
+            return "texturepalette is deprecated: fixed ON and no longer toggleable";
+        }
+        if ("predictivestartup".equals(key)) {
+            return "predictivestartup is deprecated: fixed ON and no longer toggleable";
+        }
+        if (!"unknownfog".equals(key)) {
             return "unknown visual toggle: " + name;
         }
 
@@ -684,18 +732,21 @@ public final class SealantermapPlugin extends JavaPlugin {
                 unknownFogEnabled = enabled;
                 getConfig().set("visual.unknown-fog.enabled", unknownFogEnabled);
             }
-            case "chunkboundary" -> {
-                chunkBoundaryEnabled = enabled;
-                getConfig().set("visual.chunk-boundary.enabled", chunkBoundaryEnabled);
-            }
-            case "predictivestartup" -> {
-                startupPredictiveEnabled = enabled;
-                getConfig().set("local-render.startup-predictive.enabled", startupPredictiveEnabled);
-            }
-            case "texturepalette" -> {
-                texturePaletteEnabled = enabled;
-                getConfig().set("visual.texture-color.enabled", texturePaletteEnabled);
-            }
+            /*
+             * case "chunkboundary" (removed):
+             * Legacy behavior toggled backend/frontend boundary overlay and persisted
+             * visual.chunk-boundary.enabled. This is intentionally retired to avoid
+             * boundary rendering divergence and zoom-level flicker issues.
+             * See updateVisualSettings(): requests now return a deprecation message.
+             */
+            /*
+             * case "predictivestartup" (removed):
+             * Startup predictive is fixed ON to keep first-frame behavior deterministic.
+             *
+             * case "texturepalette" (removed):
+             * Texture palette is fixed ON to keep map color logic stable and avoid
+             * runtime style drift from accidental toggles.
+             */
             default -> {
                 return;
             }
@@ -707,7 +758,7 @@ public final class SealantermapPlugin extends JavaPlugin {
 
     private String updateRenderQuality(Integer edge) {
         if (edge == null) {
-            return "invalid quality edge";
+            return "无效的画质档位";
         }
         return runOnMainThreadAndWait(() -> applyRenderQualityOnMainThread(edge));
     }
@@ -715,10 +766,10 @@ public final class SealantermapPlugin extends JavaPlugin {
     private String applyRenderQualityOnMainThread(int edge) {
         Integer normalized = normalizeQualityEdge(edge);
         if (normalized == null) {
-            return "quality must be one of: 1,2,3,16,80";
+            return "画质档位必须是：1、2、3、16、80";
         }
         if (chunkPixelSize == normalized) {
-            return "quality unchanged: " + qualityLabel(normalized);
+            return "画质未变化：" + qualityLabel(normalized);
         }
 
         chunkPixelSize = normalized;
@@ -729,9 +780,9 @@ public final class SealantermapPlugin extends JavaPlugin {
             rebuildRenderEngine();
             pushPreviewConfig();
             triggerRenderAsync("quality-full-web", true);
-            return "quality switched to " + qualityLabel(chunkPixelSize) + ", full render queued";
+            return "画质已切换为 " + qualityLabel(chunkPixelSize) + "，已排队全量重建";
         } catch (Exception e) {
-            return "quality switch failed: " + e.getMessage();
+            return "画质切换失败：" + e.getMessage();
         }
     }
 
@@ -799,12 +850,12 @@ public final class SealantermapPlugin extends JavaPlugin {
 
     private static String qualityLabel(int edge) {
         return switch (edge) {
-            case 1 -> "chunk-1px";
-            case 2 -> "chunk-4px";
-            case 3 -> "chunk-9px";
-            case 16 -> "block-1px";
-            case 80 -> "block-25px";
-            default -> "custom-" + edge + "px";
+            case 1 -> "1像素/区块";
+            case 2 -> "4像素/区块";
+            case 3 -> "9像素/区块";
+            case 16 -> "1像素/方块";
+            case 80 -> "25像素/方块（巡检）";
+            default -> edge + "像素/区块";
         };
     }
 

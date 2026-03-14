@@ -3,15 +3,15 @@ version: 0.1.0
 main: io.sealantermap.SealantermapPlugin
 api-version: "1.20"
 author: zalataraglados-prog
-description: Ultra-light local map renderer for Bukkit-family servers with manual and interval auto updates.
+description: 超轻量本地地图渲染插件，支持手动渲染与定时增量更新。
 
 commands:
   slmap:
-    description: Sealantermap control command
+    description: Sealantermap 管理命令
     usage: /slmap <status|render [force]|auto <on|off>|interval <seconds>|reload>
     aliases: [sealantermap]
 
 permissions:
   sealantermap.admin:
-    description: Access Sealantermap command controls
+    description: 允许使用 Sealantermap 管理命令
     default: op

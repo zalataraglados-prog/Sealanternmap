@@ -2,22 +2,15 @@
   "id": "sealantermap-bridge",
   "repo": "zalataraglados-prog/Sealanternmap",
   "name": {
-    "zh-CN": "Sealantermap 海晶灯适配器",
+    "zh-CN": "\u6d77\u6676\u706f\u5730\u56fe\u6865\u63a5",
     "en-US": "Sealantermap Bridge"
   },
   "description": {
-    "zh-CN": "单插件适配：在 SeaLantern 内嵌地图预览，并可一键安装/更新 Sealantermap 核心到目标服务器。",
+    "zh-CN": "\u5355\u63d2\u4ef6\u9002\u914d\uff1a\u5728 SeaLantern \u5185\u5d4c\u5730\u56fe\u9884\u89c8\uff0c\u5e76\u652f\u6301\u4e00\u952e\u5b89\u88c5/\u66f4\u65b0 Sealantermap \u6838\u5fc3\u5230\u76ee\u6807\u670d\u52a1\u5668\u3002",
     "en-US": "One-package adapter: embed map preview in SeaLantern and install/update Sealantermap core jar to selected server."
   },
-  "permissions": [
-    "log",
-    "ui",
-    "fs",
-    "server"
-  ],
-  "categories": [
-    "utility"
-  ],
+  "permissions": ["log", "ui", "fs", "server"],
+  "categories": ["utility"],
   "download_type": "source",
   "branch": "main"
 }

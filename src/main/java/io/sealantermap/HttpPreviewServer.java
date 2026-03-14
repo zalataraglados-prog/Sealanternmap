@@ -76,9 +76,12 @@ final class HttpPreviewServer {
 
   private volatile RenderSnapshot snapshot = RenderSnapshot.EMPTY;
   private volatile boolean unknownFogEnabled = true;
+  // Deprecated runtime flag kept only for API/config backward compatibility.
+  // Frontend boundary overlay was removed and backend no longer draws chunk boundary lines.
   private volatile boolean chunkBoundaryEnabled = false;
   private volatile String emptyColorHex = "#111827";
-  private volatile String fogDisabledColorHex = "#dbeafe";
+  private volatile String fogDisabledColorHex = "#ffffff";
+  // Deprecated color field kept only so old clients/config readers do not break.
   private volatile String chunkBoundaryColorHex = "#00e5ff";
   private volatile int chunkPixelSize = 1;
   private volatile boolean predictiveStartupEnabled = true;
@@ -140,8 +143,8 @@ final class HttpPreviewServer {
     server.createContext("/action/render", this::handleActionRender);
     // Frontend action endpoint: update auto-render config.
     server.createContext("/action/auto", this::handleActionAuto);
-    // Frontend action endpoint: toggle visual switches
-    // (fog/boundary/predictive/texture).
+    // Frontend action endpoint: toggle visual switches (fog/predictive/texture).
+    // "chunkboundary" is kept as a deprecated backend-compatible action key.
     server.createContext("/action/visual", this::handleActionVisual);
     // Frontend action endpoint: switch render quality and trigger full rebuild.
     server.createContext("/action/quality", this::handleActionQuality);
@@ -177,13 +180,18 @@ final class HttpPreviewServer {
     boolean shouldClearCache = this.chunkPixelSize != Math.max(1, chunkPixelSize)
         || !safeHex(this.emptyColorHex, "#111827").equals(safeHex(emptyColorHex, "#111827"));
     this.unknownFogEnabled = unknownFogEnabled;
+    // NOTE:
+    // chunkBoundaryEnabled/chunkBoundaryColorHex are retained for backward compatibility
+    // with older stats consumers and persisted configs, but boundary rendering itself has
+    // been removed from both frontend and backend render pipeline.
     this.chunkBoundaryEnabled = chunkBoundaryEnabled;
     this.emptyColorHex = safeHex(emptyColorHex, "#111827");
-    this.fogDisabledColorHex = safeHex(fogDisabledColorHex, "#dbeafe");
+    this.fogDisabledColorHex = safeHex(fogDisabledColorHex, "#ffffff");
     this.chunkBoundaryColorHex = safeHex(chunkBoundaryColorHex, "#00e5ff");
     this.chunkPixelSize = Math.max(1, chunkPixelSize);
     this.predictiveStartupEnabled = predictiveStartupEnabled;
-    this.texturePaletteEnabled = texturePaletteEnabled;
+    // Texture palette is fixed ON (frontend toggle removed).
+    this.texturePaletteEnabled = true;
     if (shouldClearCache) {
       clearTileCache();
     }
@@ -236,43 +244,40 @@ final class HttpPreviewServer {
         <!doctype html>
         <html lang="zh-CN">
         <head>
-        <!doctype html>
-        <html lang="zh-CN">
-        <head>
           <meta charset="utf-8"/>
           <meta name="viewport" content="width=device-width,initial-scale=1"/>
           <title>Sealantermap</title>
           <style>
             :root{
-              --bg:transparent; --card:rgba(30, 41, 59, 0.7); --text:#f8fafc; --muted:#94a3b8;
-              --line:rgba(255, 255, 255, 0.1); --primary:#38bdf8; --ok:#22c55e; --warn:#f59e0b;
-              --sl-btn-bg:rgba(56, 189, 248, 0.2);
-              --sl-btn-bg-hover:rgba(56, 189, 248, 0.3);
-              --sl-btn-secondary:rgba(255, 255, 255, 0.05);
-              --sl-btn-secondary-hover:rgba(255, 255, 255, 0.1);
+              --bg:#ffffff; --card:#ffffff; --text:#0f172a; --muted:#64748b;
+              --line:#e2e8f0; --primary:#0ea5e9; --ok:#16a34a; --warn:#d97706;
+              --sl-btn-bg:#e0f2fe;
+              --sl-btn-bg-hover:#bae6fd;
+              --sl-btn-secondary:#ffffff;
+              --sl-btn-secondary-hover:#f8fafc;
+              --viewer-bg:#ffffff;
             }
             *{box-sizing:border-box}
             body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
             .wrap{max-width:1200px;margin:0 auto;padding:16px}
             .top{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-bottom:12px}
-            .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);box-shadow:0 4px 6px -1px rgba(0,0,0,0.1)}
+            .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;backdrop-filter:none;-webkit-backdrop-filter:none;box-shadow:0 1px 2px rgba(15,23,42,0.04)}
             .title{font-size:13px;color:var(--muted);margin:0 0 6px 0;font-weight:500}
             .value{font-size:20px;font-weight:600;margin:0;font-family:Consolas,Menlo,monospace}
             .toolbar{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:12px}
-            .ctrl{display:flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 12px;color:var(--text);font-size:13px;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
+            .ctrl{display:flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 12px;color:var(--text);font-size:13px;backdrop-filter:none;-webkit-backdrop-filter:none}
             .ctrl input[type="range"]{width:120px;accent-color:var(--primary)}
-            .ctrl input[type="number"]{width:70px;background:rgba(0,0,0,0.2);border:1px solid var(--line);color:var(--text);border-radius:4px;padding:2px 6px}
-            .btn{cursor:pointer;background:var(--sl-btn-bg);color:var(--primary);border:1px solid rgba(56, 189, 248, 0.3);border-radius:6px;padding:6px 12px;font-size:13px;font-weight:500;transition:all 0.2s}
+            .ctrl input[type="number"]{width:70px;background:#ffffff;border:1px solid var(--line);color:var(--text);border-radius:4px;padding:2px 6px}
+            .btn{cursor:pointer;background:var(--sl-btn-bg);color:#0c4a6e;border:1px solid #bae6fd;border-radius:6px;padding:6px 12px;font-size:13px;font-weight:500;transition:all 0.2s}
             .btn:hover{background:var(--sl-btn-bg-hover)}
             .btn.secondary{background:var(--sl-btn-secondary);color:var(--text);border:1px solid var(--line)}
             .btn.secondary:hover{background:var(--sl-btn-secondary-hover)}
             .btn:disabled{opacity:0.5;cursor:not-allowed}
-            .badge{display:inline-flex;align-items:center;padding:4px 10px;border-radius:99px;background:rgba(0,0,0,0.3);border:1px solid var(--line);font-size:12px}
-            .viewer{position:relative;overflow:hidden;background:#030712;border:1px solid var(--line);border-radius:12px;height:82vh;min-height:520px;contain:layout paint style;isolation:isolate}
+            .badge{display:inline-flex;align-items:center;padding:4px 10px;border-radius:99px;background:#ffffff;border:1px solid var(--line);font-size:12px}
+            .viewer{position:relative;overflow:hidden;background:var(--viewer-bg);border:1px solid var(--line);border-radius:12px;height:82vh;min-height:520px;contain:layout paint style;isolation:isolate}
             .stage{position:absolute;left:0;top:0;transform-origin:0 0;will-change:transform;backface-visibility:hidden}
             .tile-layer{position:relative;backface-visibility:hidden}
             .tile{position:absolute;display:block;image-rendering:pixelated;image-rendering:crisp-edges;backface-visibility:hidden}
-            .grid-overlay{position:absolute;inset:0;pointer-events:none;display:none;opacity:0.92;z-index:5;background-image:linear-gradient(to right, rgba(0,229,255,0.95) 1px, transparent 1px),linear-gradient(to bottom, rgba(0,229,255,0.95) 1px, transparent 1px)}
             .fog-overlay{
               position:absolute;
               left:0;top:0;
@@ -280,19 +285,20 @@ final class HttpPreviewServer {
               display:none;
               z-index:4;
               background:#000;
+              mix-blend-mode:normal;
               backface-visibility:hidden;
               will-change:transform,width,height;
             }
             .quality-group{display:flex;gap:6px;flex-wrap:wrap}
-            .quality-btn.active{background:#0ea5e9;color:#00111f;border:1px solid #38bdf8}
+            .quality-btn.active{background:#0ea5e9;color:#ffffff;border:1px solid #0284c7}
             .legend{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
             .sw{width:14px;height:14px;border-radius:3px;border:1px solid #0008;display:inline-block;vertical-align:middle;margin-right:5px}
             .meta{margin-top:6px;font-size:12px;color:var(--muted)}
-            .links a{color:#93c5fd;text-decoration:none}
+            .links a{color:#0369a1;text-decoration:none}
             .ok{color:var(--ok)}
             .warn{color:var(--warn)}
-            .confirm-overlay{position:fixed;inset:0;background:rgba(2,6,23,0.66);display:none;align-items:center;justify-content:center;z-index:30}
-            .confirm-card{width:min(520px, calc(100%% - 24px));background:rgba(17,24,39,0.98);border:1px solid var(--line);border-radius:12px;padding:14px}
+            .confirm-overlay{position:fixed;inset:0;background:rgba(15,23,42,0.18);display:none;align-items:center;justify-content:center;z-index:30}
+            .confirm-card{width:min(520px, calc(100%% - 24px));background:#ffffff;border:1px solid var(--line);border-radius:12px;padding:14px;box-shadow:0 8px 20px rgba(15,23,42,0.12)}
             .confirm-title{margin:0 0 8px 0;font-size:15px;font-weight:700}
             .confirm-text{margin:0;color:var(--muted);line-height:1.5}
             .confirm-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
@@ -303,23 +309,23 @@ final class HttpPreviewServer {
           <div class="top">
             <div class="card"><p class="title">引擎状态</p><p class="value" id="status">%s</p></div>
             <div class="card"><p class="title">图片尺寸</p><p class="value"><span id="wh">%dx%d</span></p></div>
-            <div class="card"><p class="title">已持久化区块</p><p class="value" id="chunks">%d</p></div>
-            <div class="card"><p class="title">构建次数</p><p class="value" id="rc">%d</p></div>
-            <div class="card"><p class="title">游戏时间</p><p class="value"><span id="gt">%s</span></p><p class="meta card-note"><span id="dn">%s</span> | 现实秒表 (20 ticks = 1 s)</p></div>
+            <div class="card"><p class="title">已落盘区块</p><p class="value" id="chunks">%d</p></div>
+            <div class="card"><p class="title">渲染次数</p><p class="value" id="rc">%d</p></div>
+            <div class="card"><p class="title">游戏时间</p><p class="value"><span id="gt">%s</span></p><p class="meta card-note"><span id="dn">%s</span> | 实时秒表 (20 ticks = 1 s)</p></div>
           </div>
 
           <div class="toolbar">
             <div class="ctrl">缩放 <button class="btn" id="zout">-</button><input id="zoom" type="range" min="0.1" max="64" step="0.1" value="1"/><button class="btn" id="zin">+</button><span id="zv">1x</span></div>
-            <div class="ctrl"><label><input type="checkbox" id="autoref"/> 自动刷新</label><input id="sec" type="number" min="2" max="60" value="4"/> 秒 <button class="btn secondary" id="triggerRef">立即刷新</button></div>
+            <div class="ctrl"><label><input type="checkbox" id="autoref"/> 自动刷新</label><input id="sec" type="number" min="2" max="60" value="4"/> 秒<button class="btn secondary" id="triggerRef">立即刷新</button></div>
             <div class="ctrl"><label><input type="checkbox" id="smooth"/> 平滑缩放</label></div>
           </div>
 
           <div class="toolbar">
-            <div class="ctrl"><button class="btn secondary" id="renderInc">增量构建</button><button class="btn" id="renderFull">全量构建</button></div>
-            <div class="ctrl"><span class="warn">性能提示: 全量构建会重建基底图形且耗时较长。</span></div>
-            <div class="ctrl"><label><input type="checkbox" id="srvAuto" %s/> 后台自动构建</label></div>
-            <div class="ctrl">间隔 <input id="srvSec" type="number" min="2" max="3600" value="%d"/> 秒 <button class="btn secondary" id="saveAuto">应用</button></div>
-            <div class="ctrl"><span id="actionMsg" class="ok">准备就绪</span></div>
+            <div class="ctrl"><button class="btn secondary" id="renderInc">增量渲染</button><button class="btn" id="renderFull">全量渲染</button></div>
+            <div class="ctrl"><span class="warn">性能提示: 全量渲染会重建基底图，耗时可能较长。</span></div>
+            <div class="ctrl"><label><input type="checkbox" id="srvAuto" %s/> 后台自动渲染</label></div>
+            <div class="ctrl">间隔 <input id="srvSec" type="number" min="2" max="3600" value="%d"/> 秒<button class="btn secondary" id="saveAuto">应用</button></div>
+            <div class="ctrl"><span id="actionMsg" class="ok">就绪</span></div>
           </div>
 
           <div class="toolbar">
@@ -329,24 +335,20 @@ final class HttpPreviewServer {
                 <button class="btn secondary quality-btn" id="q1" data-edge="1">1x</button>
                 <button class="btn secondary quality-btn" id="q2" data-edge="2">4x</button>
                 <button class="btn secondary quality-btn" id="q3" data-edge="3">9x</button>
-                <button class="btn secondary quality-btn" id="q16" data-edge="16">区块</button>
-                <button class="btn secondary quality-btn" id="q80" data-edge="80">细节</button>
+                <button class="btn secondary quality-btn" id="q16" data-edge="16">方块</button>
+                <button class="btn secondary quality-btn" id="q80" data-edge="80">巡检</button>
               </div>
             </div>
-            <div class="ctrl"><span class="warn">切换画质档位将触发全量重建。16和80的构建极度缓慢，但可供细致检查。</span></div>
+            <div class="ctrl"><span class="warn">切换画质会触发全量重建。16/80 档更慢，但适合细节巡检。</span></div>
           </div>
 
           <div class="toolbar">
             <div class="ctrl"><button class="btn secondary" id="fog"></button></div>
-            <div class="ctrl"><button class="btn secondary" id="bd"></button></div>
-            <div class="ctrl"><button class="btn secondary" id="pred"></button></div>
-            <div class="ctrl"><button class="btn secondary" id="tex"></button></div>
           </div>
 
           <div id="viewer" class="viewer">
             <div id="stage" class="stage">
               <div id="tileLayer" class="tile-layer"></div>
-              <div id="gridLayer" class="grid-overlay"></div>
             </div>
             <div id="fogLayer" class="fog-overlay"></div>
           </div>
@@ -355,8 +357,7 @@ final class HttpPreviewServer {
           <p class="meta links"><a href="/map.png">/map.png</a> | <a href="/tile.png?x=0&y=0&size=256">/tile.png</a> | <a href="/tile.png?x=0&y=0&size=256&manual=1">/tile.png(manual)</a> | <a href="/stats.json">/stats.json</a></p>
           <div class="legend">
             <span class="badge"><i class="sw" style="background:%s"></i>未知区域 / 未渲染</span>
-            <span class="badge"><i class="sw" style="background:%s"></i>未知区域 (关闭迷雾)</span>
-            <span class="badge"><i class="sw" style="background:%s"></i>区块边界线</span>
+            <span class="badge"><i class="sw" style="background:%s"></i>未知区域（关闭迷雾）</span>
           </div>
         </div>
         <div id="confirmOverlay" class="confirm-overlay">
@@ -373,10 +374,9 @@ final class HttpPreviewServer {
         (function(){
           const cfg = {
             unknownFogEnabled: %s,
-            chunkBoundaryEnabled: %s,
             chunkPixelSize: %d,
             predictiveStartupEnabled: %s,
-            texturePaletteEnabled: %s,
+            texturePaletteEnabled: true,
             emptyColor: '%s',
             fogDisabledColor: '%s',
             mapWidth: %d,
@@ -386,13 +386,7 @@ final class HttpPreviewServer {
           const viewer = document.getElementById('viewer');
           const stage = document.getElementById('stage');
           const tileLayer = document.getElementById('tileLayer');
-          const grid = document.getElementById('gridLayer');
           const fog = document.getElementById('fogLayer');
-          // Grid is rendered in screen space to keep chunk boundary scope stable across zoom levels.
-          // Move it out of the transformed stage to avoid scaling-induced drift.
-          if(grid && grid.parentElement !== viewer){
-            viewer.appendChild(grid);
-          }
           if(fog && fog.parentElement !== viewer){
             viewer.appendChild(fog);
           }
@@ -410,9 +404,6 @@ final class HttpPreviewServer {
           const btnSaveAuto = document.getElementById('saveAuto');
           const qualityButtons = Array.from(document.querySelectorAll('.quality-btn'));
           const btnFog = document.getElementById('fog');
-          const btnBd = document.getElementById('bd');
-          const btnPred = document.getElementById('pred');
-          const btnTex = document.getElementById('tex');
           const confirmOverlay = document.getElementById('confirmOverlay');
           const confirmText = document.getElementById('confirmText');
           const confirmCancel = document.getElementById('confirmCancel');
@@ -433,7 +424,6 @@ final class HttpPreviewServer {
           const DRAG_TILE_REFRESH_MIN_DELTA_PX = 24;
           const DRAG_CLEANUP_DELAY_MS = 220;
           const LOW_ZOOM_FILTER_CUTOFF = 0.75;
-          const MIN_GRID_SCREEN_PX = 1;
           const VIEW_GUARD_ZOOM_LINE = 0.60;
           const VIEW_GUARD_MISS_THRESHOLD = 0.85;
           const VIEW_GUARD_EXIT_ZOOM_LINE = 0.85;
@@ -441,6 +431,8 @@ final class HttpPreviewServer {
           const VIEW_GUARD_REARM_STABLE_MS = 2000;
           const VIEW_GUARD_COOLDOWN_MS = 3500;
           const COARSE_CHUNKS_PER_PIXEL = 4;
+          const QUALITY_SWITCH_STATS_WAIT_MS = 90000;
+          const QUALITY_SWITCH_POLL_MS = 800;
 
           let zoom = Number(zoomEl.value);
           let tx = 10, ty = 10;
@@ -462,8 +454,6 @@ final class HttpPreviewServer {
           let renderedTy = ty;
           let renderedZoom = zoom;
           let textureFilterState = '';
-          let gridVisibleState = false;
-          let gridStepState = 0;
           let coarseMode = false;
           let lastZoomForGuard = zoom;
           let guardRearmArmed = true;
@@ -479,6 +469,7 @@ final class HttpPreviewServer {
           let gameClockBaseMs = 0;
           let gameClockTimer = null;
           let lastRenderSignature = '';
+          let qualitySwitching = false;
 
           function clampZoom(v){
             return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, v));
@@ -560,19 +551,13 @@ final class HttpPreviewServer {
               if(!raw){ return; }
               const parsed = JSON.parse(raw);
               if(typeof parsed.unknownFogEnabled === 'boolean'){ cfg.unknownFogEnabled = parsed.unknownFogEnabled; }
-              if(typeof parsed.chunkBoundaryEnabled === 'boolean'){ cfg.chunkBoundaryEnabled = parsed.chunkBoundaryEnabled; }
-              if(typeof parsed.predictiveStartupEnabled === 'boolean'){ cfg.predictiveStartupEnabled = parsed.predictiveStartupEnabled; }
-              if(typeof parsed.texturePaletteEnabled === 'boolean'){ cfg.texturePaletteEnabled = parsed.texturePaletteEnabled; }
             }catch(_){ }
           }
 
           function saveVisualPrefs(){
             try{
               localStorage.setItem(VISUAL_PREF_KEY, JSON.stringify({
-                unknownFogEnabled: cfg.unknownFogEnabled,
-                chunkBoundaryEnabled: cfg.chunkBoundaryEnabled,
-                predictiveStartupEnabled: cfg.predictiveStartupEnabled,
-                texturePaletteEnabled: cfg.texturePaletteEnabled
+                unknownFogEnabled: cfg.unknownFogEnabled
               }));
             }catch(_){ }
           }
@@ -593,12 +578,65 @@ final class HttpPreviewServer {
           }
 
           function qualityText(edge){
-            if(edge === 1){ return '1 px/chunk'; }
-            if(edge === 2){ return '4 px/chunk'; }
-            if(edge === 3){ return '9 px/chunk'; }
-            if(edge === 16){ return '1 px/block'; }
-            if(edge === 80){ return '25 px/block (inspect)'; }
-            return edge + ' px/chunk';
+            if(edge === 1){ return '1像素/区块'; }
+            if(edge === 2){ return '4像素/区块'; }
+            if(edge === 3){ return '9像素/区块'; }
+            if(edge === 16){ return '1像素/方块'; }
+            if(edge === 80){ return '25像素/方块（巡检）'; }
+            return edge + '像素/区块';
+          }
+
+          function syncQualityButtonLabels(){
+            for(const btn of qualityButtons){
+              const edge = Number(btn.dataset.edge || 1);
+              btn.textContent = qualityText(edge);
+              btn.title = qualityText(edge);
+            }
+          }
+
+          function setQualityButtonsDisabled(disabled){
+            for(const btn of qualityButtons){
+              btn.disabled = !!disabled;
+            }
+          }
+
+          function sleep(ms){
+            return new Promise(resolve => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
+          }
+
+          function isActionFailedMessage(message){
+            const text = String(message || '').toLowerCase();
+            return text.startsWith('failed')
+              || text.includes('quality switch failed')
+              || text.includes('timeout waiting for server main thread')
+              || text.includes('失败')
+              || text.includes('超时');
+          }
+
+          function resetLodGuardState(){
+            coarseMode = false;
+            autoLodFallbackNotified = false;
+            guardRearmArmed = true;
+            guardRecoverStableSinceMs = 0;
+            guardCooldownUntilMs = 0;
+            guardSmoothedHitRatio = 1;
+            lastZoomForGuard = zoom;
+          }
+
+          function preserveViewportAnchorForTopology(oldW, oldH, newW, newH){
+            const oW = Math.max(1, Number(oldW) || 1);
+            const oH = Math.max(1, Number(oldH) || 1);
+            const nW = Math.max(1, Number(newW) || 1);
+            const nH = Math.max(1, Number(newH) || 1);
+            const anchor = viewerCenterAnchor();
+            const oldMapX = (anchor.x - tx) / Math.max(0.0001, zoom);
+            const oldMapY = (anchor.y - ty) / Math.max(0.0001, zoom);
+            const nx = Math.max(0, Math.min(1, oldMapX / oW));
+            const ny = Math.max(0, Math.min(1, oldMapY / oH));
+            const newMapX = nx * nW;
+            const newMapY = ny * nH;
+            tx = anchor.x - (newMapX * zoom);
+            ty = anchor.y - (newMapY * zoom);
           }
 
           function pad2(v){
@@ -609,7 +647,7 @@ final class HttpPreviewServer {
           function formatGameTimeStopwatch(ticks){
             const t = Number(ticks);
             if(!Number.isFinite(t) || t < 0){
-              return 'n/a';
+              return '未知';
             }
             const totalSeconds = Math.floor(t / 20);
             const days = Math.floor(totalSeconds / 86400);
@@ -617,7 +655,7 @@ final class HttpPreviewServer {
             const minutes = Math.floor((totalSeconds %% 3600) / 60);
             const seconds = totalSeconds %% 60;
             const time = `${pad2(hours)}:${pad2(minutes)}:${pad2(seconds)}`;
-            return days > 0 ? `${days}d ${time}` : time;
+            return days > 0 ? `${days}天 ${time}` : time;
           }
 
           function phaseTextFromTicks(ticks){
@@ -683,7 +721,13 @@ final class HttpPreviewServer {
           function setTextureFilter(){
             // CSS filter is expensive at low zoom and during drag; disable in those cases
             // to avoid edge shimmer/flicker.
-            const enabled = cfg.texturePaletteEnabled && !dragging && zoom >= LOW_ZOOM_FILTER_CUTOFF;
+            //
+            // Texture palette toggle is retired and fixed ON, so "enabled" no longer
+            // depends on cfg.texturePaletteEnabled.
+            //
+            // Legacy branch (retired):
+            // const enabled = cfg.texturePaletteEnabled && !dragging && zoom >= LOW_ZOOM_FILTER_CUTOFF;
+            const enabled = !dragging && zoom >= LOW_ZOOM_FILTER_CUTOFF;
             const next = enabled ? 'saturate(1.12) contrast(1.05)' : 'none';
             if(next !== textureFilterState){
               textureFilterState = next;
@@ -692,33 +736,18 @@ final class HttpPreviewServer {
           }
 
           function updateGridStyle(){
-            if(!cfg.chunkBoundaryEnabled || coarseMode){
-              if(gridVisibleState){
-                grid.style.display = 'none';
-                gridVisibleState = false;
-              }
-              return;
-            }
-            const step = Math.max(1, Number(cfg.chunkPixelSize || 1));
-            const screenStep = step * Math.max(0.0001, renderedZoom);
-            if(screenStep < MIN_GRID_SCREEN_PX){
-              if(gridVisibleState){
-                grid.style.display = 'none';
-                gridVisibleState = false;
-              }
-              return;
-            }
-            if(!gridVisibleState){
-              grid.style.display = 'block';
-              gridVisibleState = true;
-            }
-            if(gridStepState !== screenStep){
-              grid.style.backgroundSize = `${screenStep}px ${screenStep}px`;
-              gridStepState = screenStep;
-            }
-            const phaseX = ((renderedTx %% screenStep) + screenStep) %% screenStep;
-            const phaseY = ((renderedTy %% screenStep) + screenStep) %% screenStep;
-            grid.style.backgroundPosition = `${phaseX}px ${phaseY}px`;
+            /*
+             * Chunk-boundary frontend overlay is retired.
+             *
+             * Why keep this no-op:
+             * 1) Some existing call sites still invoke updateGridStyle() in the
+             *    render/transform flow. Keeping a stable no-op avoids touching many
+             *    unrelated rendering paths in one change.
+             * 2) This preserves backward compatibility for older cached frontend code
+             *    paths while guaranteeing boundary lines are never shown again.
+             * 3) Future cleanup can safely remove this method after all call sites are
+             *    refactored together.
+             */
           }
 
           function updateFogMaskVersionFromStats(s){
@@ -762,6 +791,16 @@ final class HttpPreviewServer {
             fogMaskAppliedVersion = version;
           }
 
+          function clearFogOverlayState(){
+            fogMaskImage = null;
+            fogMaskLoading = false;
+            fogMaskAppliedVersion = '';
+            if(fog){
+              fog.style.display = 'none';
+              fog.style.maskImage = 'none';
+              fog.style.webkitMaskImage = 'none';
+            }
+          }
           function ensureFogMaskLoaded(){
             if(!cfg.unknownFogEnabled || !fogMaskVersion || fogMaskLoading || fogMaskImage){
               return;
@@ -816,11 +855,14 @@ final class HttpPreviewServer {
           }
 
           function refreshVisualButtons(){
-            btnFog.textContent = 'Unknown fog: ' + (cfg.unknownFogEnabled ? 'On' : 'Off');
-            btnBd.textContent = 'Chunk boundary: ' + (cfg.chunkBoundaryEnabled ? 'On' : 'Off');
-            btnPred.textContent = 'Startup prediction: ' + (cfg.predictiveStartupEnabled ? 'On' : 'Off');
-            btnTex.textContent = 'Texture palette: ' + (cfg.texturePaletteEnabled ? 'On' : 'Off');
-            viewer.style.background = cfg.unknownFogEnabled ? '#000000' : cfg.fogDisabledColor;
+            btnFog.textContent = '未知迷雾：' + (cfg.unknownFogEnabled ? '开启' : '关闭');
+            syncQualityButtonLabels();
+            // Keep base map background stable. Unknown fog is handled by overlay only.
+            const viewerBg = (cfg.fogDisabledColor && String(cfg.fogDisabledColor).trim()) || '#ffffff';
+            viewer.style.background = viewerBg;
+            if(fog){
+              fog.style.background = '#000000';
+            }
             setTextureFilter();
             updateGridStyle();
             updateFogOverlayGeometry();
@@ -1269,10 +1311,23 @@ final class HttpPreviewServer {
             lastZoomForGuard = zoom;
           }
 
-          async function callJson(url){
-            const r = await fetch(url, {cache:'no-store'});
-            if(!r.ok){ throw new Error('HTTP ' + r.status); }
-            return await r.json();
+          async function callJson(url, timeoutMs=12000){
+            const controller = new AbortController();
+            const timerId = setTimeout(() => controller.abort(), Math.max(1000, Number(timeoutMs) || 12000));
+            try{
+              const r = await fetch(url, { cache:'no-store', signal: controller.signal });
+              if(!r.ok){
+                throw new Error('HTTP ' + r.status);
+              }
+              return await r.json();
+            } catch(e){
+              if(e && e.name === 'AbortError'){
+                throw new Error('request timeout');
+              }
+              throw e;
+            } finally {
+              clearTimeout(timerId);
+            }
           }
 
           async function withBusy(button, action){
@@ -1281,7 +1336,7 @@ final class HttpPreviewServer {
             button.disabled = true;
             button.textContent = 'Processing...';
             try{
-              await action();
+              return await action();
             } finally {
               button.disabled = false;
               button.textContent = oldText;
@@ -1335,33 +1390,52 @@ final class HttpPreviewServer {
             const sec = Math.max(2, Math.min(3600, Number(srvSec.value) || 30));
             srvSec.value = sec;
             const data = await callJson('/action/auto?enabled=' + (srvAuto.checked ? '1' : '0') + '&interval=' + sec + '&t=' + Date.now());
-            setMsg(data.message || 'auto updated', true);
+            setMsg(data.message || '自动渲染设置已更新', true);
             scheduleTriggeredRefresh(300);
           }
 
           async function applyQualityEdge(edgeRaw){
             const edge = Math.max(1, Number(edgeRaw || 1));
             if(edge === Math.max(1, Number(cfg.chunkPixelSize || 1))){
-              setMsg('Quality unchanged: ' + qualityText(edge), true);
-              return;
+              setMsg('画质未变化：' + qualityText(edge), true);
+              return { edge, message: '画质未变化', unchanged: true };
             }
             if(edge === 16){
-              const confirmed = await themedConfirm('Level 16 is 1 px/block and will trigger a full rebuild. Render time and load will increase. Continue?');
+              const confirmed = await themedConfirm('16 档为 1 像素/方块，会触发全量重建，渲染耗时和负载会增加。是否继续？');
               if(!confirmed){
-                setMsg('Cancelled switching to level 16.', false);
-                return;
+                setMsg('已取消切换到 16 档。', false);
+                return null;
               }
             }
             if(edge === 80){
-              const confirmed = await themedConfirm('Level 80 is 25 px/block (5x5), intended for detail inspection. It generates large images and full rebuild will be slower. Continue?');
+              const confirmed = await themedConfirm('80 档为 25 像素/方块（5x5），用于细节巡检。会生成更大图片且全量重建更慢。是否继续？');
               if(!confirmed){
-                setMsg('Cancelled switching to level 80.', false);
-                return;
+                setMsg('已取消切换到 80 档。', false);
+                return null;
               }
             }
-            const data = await callJson('/action/quality?edge=' + edge + '&t=' + Date.now());
-            setMsg(data.message || ('quality updated: ' + qualityText(edge)), true);
-            scheduleTriggeredRefresh(600);
+            const data = await callJson('/action/quality?edge=' + edge + '&t=' + Date.now(), 45000);
+            if(isActionFailedMessage(data && data.message)){
+              throw new Error(data.message || '画质切换操作失败');
+            }
+            return { edge, message: (data && data.message) || ('画质已更新：' + qualityText(edge)) };
+          }
+
+          async function waitForQualityTopology(targetEdge, oldSignature, oldRenderCount){
+            const start = Date.now();
+            while((Date.now() - start) < QUALITY_SWITCH_STATS_WAIT_MS){
+              try{
+                const s = await callJson('/stats.json?t=' + Date.now(), 10000);
+                const nextSig = renderSignature(s);
+                const edgeOk = Math.max(1, Number(s.chunkPixelSize || 1)) === targetEdge;
+                const renderCount = Math.max(0, Number(s.renderCount || 0));
+                if(edgeOk && renderCount > oldRenderCount && nextSig !== oldSignature){
+                  return s;
+                }
+              } catch(_){ }
+              await sleep(QUALITY_SWITCH_POLL_MS);
+            }
+            return null;
           }
 
           zoomEl.addEventListener('input', ()=>{
@@ -1381,50 +1455,82 @@ final class HttpPreviewServer {
 
           for(const btn of qualityButtons){
             btn.addEventListener('click', async ()=>{
+              if(qualitySwitching){
+                setMsg('画质切换进行中，请稍候...', false);
+                return;
+              }
               const edge = Number(btn.dataset.edge || 1);
-              setMsg('Switching quality and requesting full rebuild...', false);
+              setMsg('正在切换画质并请求全量重建...', false);
               try {
-                await withBusy(btn, ()=>applyQualityEdge(edge));
+                qualitySwitching = true;
+                setQualityButtonsDisabled(true);
+                clearFogOverlayState();
+                const oldRenderCount = Math.max(0, Number(cfg.renderCount || 0));
+                const oldSignature = lastRenderSignature || [
+                  Number(cfg.renderCount || 0),
+                  Number(cfg.generatedEpochMs || 0),
+                  Number(cfg.mapWidth || 0),
+                  Number(cfg.mapHeight || 0),
+                  Number(cfg.chunkPixelSize || 0)
+                ].join('|');
+                resetTileRequests();
+                purgeTiles();
+                const result = await withBusy(btn, ()=>applyQualityEdge(edge));
+                if(!result){
+                  return;
+                }
+                if(result.unchanged){
+                  return;
+                }
+                const topology = await waitForQualityTopology(edge, oldSignature, oldRenderCount);
+                if(topology){
+                  setMsg(result.message || ('画质已更新：' + qualityText(edge)), true);
+                } else {
+                  setMsg('已接受画质切换，正在后台等待重建完成...', false);
+                }
                 await refreshStats();
                 refreshMap(false);
               } catch(e){
-                setMsg('Quality switch failed: ' + e.message, false);
+                setMsg('画质切换失败：' + e.message, false);
+              } finally {
+                qualitySwitching = false;
+                setQualityButtonsDisabled(false);
               }
             });
           }
 
           btnRenderInc.addEventListener('click', async ()=>{
-            setMsg('Incremental render requested.', true);
+            setMsg('已请求增量渲染。', true);
             try { await withBusy(btnRenderInc, ()=>requestRender(false)); }
-            catch(e){ setMsg('Incremental render request failed: ' + e.message, false); }
+            catch(e){ setMsg('增量渲染请求失败：' + e.message, false); }
           });
 
           btnRenderFull.addEventListener('click', async ()=>{
-            const confirmed = await themedConfirm('Performance warning: full render rebuilds baseline and may occupy server main thread for a longer time (possible watchdog warning). Run during off-peak hours. Continue?');
+            const confirmed = await themedConfirm('性能警告：全量渲染会重建基底图，可能较长时间占用服务端主线程（可能触发 watchdog）。建议低峰期执行。是否继续？');
             if(!confirmed){
-              setMsg('Full render request cancelled.', false);
+              setMsg('已取消全量渲染请求。', false);
               return;
             }
-            setMsg('Full render requested.', false);
+            setMsg('已请求全量渲染。', false);
             try { await withBusy(btnRenderFull, ()=>requestRender(true)); }
-            catch(e){ setMsg('Full render request failed: ' + e.message, false); }
+            catch(e){ setMsg('全量渲染请求失败：' + e.message, false); }
           });
 
           btnSaveAuto.addEventListener('click', async ()=>{
-            setMsg('Updating auto-render settings...', true);
+            setMsg('正在更新自动渲染设置...', true);
             try { await withBusy(btnSaveAuto, applyServerAuto); }
-            catch(e){ setMsg('Auto-render settings update failed: ' + e.message, false); }
+            catch(e){ setMsg('自动渲染设置更新失败：' + e.message, false); }
           });
 
           srvAuto.addEventListener('change', async ()=>{
-            setMsg('Updating auto-render toggle...', true);
+            setMsg('正在切换自动渲染...', true);
             try { await applyServerAuto(); }
-            catch(e){ setMsg('Auto-render toggle failed: ' + e.message, false); }
+            catch(e){ setMsg('自动渲染切换失败：' + e.message, false); }
           });
 
           btnFog.addEventListener('click', async ()=>{
             const next = !cfg.unknownFogEnabled;
-            setMsg('Toggling unknown fog...', true);
+            setMsg('正在切换未知迷雾...', true);
             try {
               await withBusy(btnFog, async () => {
                 const data = await callJson(`/action/visual?name=unknownfog&enabled=${next ? '1' : '0'}&t=` + Date.now());
@@ -1435,42 +1541,11 @@ final class HttpPreviewServer {
                 saveVisualPrefs();
                 refreshVisualButtons();
                 requestFrame(false);
-                setMsg(data.message || 'Unknown fog toggled.', true);
+                setMsg(data.message || '未知迷雾已切换。', true);
               });
             } catch(e) {
-              setMsg('Unknown fog toggle failed: ' + e.message, false);
+              setMsg('未知迷雾切换失败：' + e.message, false);
             }
-          });
-
-          btnBd.addEventListener('click', ()=>{
-            cfg.chunkBoundaryEnabled = !cfg.chunkBoundaryEnabled;
-            saveVisualPrefs();
-            refreshVisualButtons();
-            refreshMap();
-            setMsg('Chunk boundary overlay toggled.', true);
-          });
-
-          btnPred.addEventListener('click', async ()=>{
-            const next = !cfg.predictiveStartupEnabled;
-            setMsg('Toggling startup prediction...', true);
-            try {
-              await withBusy(btnPred, async () => {
-                const data = await callJson(`/action/visual?name=predictivestartup&enabled=${next ? '1' : '0'}&t=` + Date.now());
-                cfg.predictiveStartupEnabled = next;
-                saveVisualPrefs();
-                refreshVisualButtons();
-                setMsg(data.message || 'Startup prediction toggled.', true);
-              });
-            } catch(e) {
-              setMsg('Startup prediction toggle failed: ' + e.message, false);
-            }
-          });
-
-          btnTex.addEventListener('click', ()=>{
-            cfg.texturePaletteEnabled = !cfg.texturePaletteEnabled;
-            saveVisualPrefs();
-            refreshVisualButtons();
-            setMsg('Texture color display toggle updated (frontend only).', true);
           });
 
           smoothEl.addEventListener('change', ()=>{ setSmooth(); refreshTiles(); });
@@ -1532,6 +1607,8 @@ final class HttpPreviewServer {
               document.getElementById('wh').textContent = `${s.width}x${s.height}`;
               document.getElementById('chunks').textContent = s.chunkCount;
               document.getElementById('rc').textContent = s.renderCount;
+              cfg.renderCount = Math.max(0, Number(s.renderCount || 0));
+              cfg.generatedEpochMs = Math.max(0, Number(s.generatedEpochMs || 0));
               const gameTimeTicks = Number(s.gameTimeTicks);
               setGameClockBase(gameTimeTicks);
               document.getElementById('gen').textContent = s.generatedEpochMs > 0 ? new Date(s.generatedEpochMs).toISOString() : 'not yet';
@@ -1552,10 +1629,17 @@ final class HttpPreviewServer {
                 const topologyChanged = prevChunkPixelSize !== cfg.chunkPixelSize
                   || prevMapWidth !== cfg.mapWidth
                   || prevMapHeight !== cfg.mapHeight;
+                if(topologyChanged){
+                  preserveViewportAnchorForTopology(prevMapWidth, prevMapHeight, cfg.mapWidth, cfg.mapHeight);
+                  resetLodGuardState();
+                }
                 // When topology changes (quality/size), force clear to avoid mixed old/new tile mosaics.
                 refreshMap(!topologyChanged);
               }
-            }catch(_){ }
+              return s;
+            }catch(_){
+              return null;
+            }
           }
 
           function refreshMap(keepVisible=true){
@@ -1619,12 +1703,9 @@ final class HttpPreviewServer {
             escape(s.message),
             emptyColorHex,
             fogDisabledColorHex,
-            chunkBoundaryColorHex,
             unknownFogEnabled ? "true" : "false",
-            chunkBoundaryEnabled ? "true" : "false",
             chunkPixelSize,
             predictiveStartupEnabled ? "true" : "false",
-            texturePaletteEnabled ? "true" : "false",
             emptyColorHex,
             fogDisabledColorHex,
             s.width,
@@ -1654,8 +1735,42 @@ final class HttpPreviewServer {
       exchange.close();
       return;
     }
-    Path currentImage = imagePath;
+    TileRequest request = parseTileRequest(exchange, imagePath);
+    if (request == null) {
+      return;
+    }
 
+    byte[] cached = getCachedTile(request.cacheKey);
+    if (cached != null) {
+      writeBody(exchange, 200, "image/png", cached);
+      return;
+    }
+
+    byte[] directPrecutBytes = readDirectPrecutBytes(request);
+    if (directPrecutBytes != null) {
+      putCachedTile(request.cacheKey, directPrecutBytes);
+      writeBody(exchange, 200, "image/png", directPrecutBytes);
+      return;
+    }
+
+    if (!tryAcquireTileRenderSlot(exchange)) {
+      return;
+    }
+    try {
+      BufferedImage tile = loadTileForRequest(request);
+      if (tile == null) {
+        sendNotFound(exchange);
+        return;
+      }
+      byte[] bytes = encodeTilePng(tile);
+      putCachedTile(request.cacheKey, bytes);
+      writeBody(exchange, 200, "image/png", bytes);
+    } finally {
+      tileRenderSemaphore.release();
+    }
+  }
+
+  private TileRequest parseTileRequest(HttpExchange exchange, Path currentImage) throws IOException {
     Map<String, String> q = parseQuery(exchange.getRequestURI().getRawQuery());
     Long xRaw = parseLongNullable(q.get("x"));
     Long yRaw = parseLongNullable(q.get("y"));
@@ -1663,6 +1778,7 @@ final class HttpPreviewServer {
     boolean autoLodRequested = parseBoolean(q.get("autoLod"), false);
     boolean manualLargeMapRequested = parseBoolean(q.get("manual"), false);
     TileAccessMode accessMode = resolveTileAccessMode(autoLodRequested, manualLargeMapRequested);
+
     int tileX = (int) Math.max(0L, xRaw == null ? 0L : xRaw);
     int tileY = (int) Math.max(0L, yRaw == null ? 0L : yRaw);
     int requestedSize = (int) Math.max(32L, Math.min(1024L, sizeRaw == null ? 256L : sizeRaw));
@@ -1676,29 +1792,25 @@ final class HttpPreviewServer {
     int mapWidth = Math.max(0, s.width);
     int mapHeight = Math.max(0, s.height);
     if (mapWidth <= 0 || mapHeight <= 0) {
-      exchange.sendResponseHeaders(404, -1);
-      exchange.close();
-      return;
+      sendNotFound(exchange);
+      return null;
     }
     if (tileX >= mapWidth || tileY >= mapHeight) {
-      exchange.sendResponseHeaders(404, -1);
-      exchange.close();
-      return;
+      sendNotFound(exchange);
+      return null;
     }
 
     Path precutTile = sampleStep == 1 ? resolvePrecutTilePath(currentImage, tileX, tileY, requestedSize) : null;
     boolean hasPrecut = precutTile != null && Files.isRegularFile(precutTile);
     boolean hasMap = currentImage != null && Files.isRegularFile(currentImage);
     if (!hasPrecut && !hasMap) {
-      exchange.sendResponseHeaders(404, -1);
-      exchange.close();
-      return;
+      sendNotFound(exchange);
+      return null;
     }
 
     long imageLastModifiedMs = hasMap
         ? Files.getLastModifiedTime(currentImage).toMillis()
         : Math.max(1L, s.generatedEpochMs);
-    long maskLastModifiedMs = 0L;
     String cacheKey = buildTileCacheKey(
         currentImage,
         imageLastModifiedMs,
@@ -1710,98 +1822,93 @@ final class HttpPreviewServer {
         false,
         safeHex(emptyColorHex, "#111827"),
         chunkPixelSize,
-        maskLastModifiedMs);
-    byte[] cached = getCachedTile(cacheKey);
-    if (cached != null) {
-      writeBody(exchange, 200, "image/png", cached);
-      return;
-    }
+        0L);
 
+    return new TileRequest(
+        currentImage,
+        precutTile,
+        accessMode,
+        tileX,
+        tileY,
+        requestedSize,
+        sampleStep,
+        mapWidth,
+        mapHeight,
+        cacheKey
+    );
+  }
+
+  private byte[] readDirectPrecutBytes(TileRequest request) throws IOException {
+    if (request.accessMode != TileAccessMode.FAST_PRECUT) {
+      return null;
+    }
+    if (request.sampleStep != 1) {
+      return null;
+    }
+    if (request.precutTile == null || !Files.isRegularFile(request.precutTile)) {
+      return null;
+    }
+    return Files.readAllBytes(request.precutTile);
+  }
+
+  private boolean tryAcquireTileRenderSlot(HttpExchange exchange) throws IOException {
     boolean acquired = false;
     try {
       acquired = tileRenderSemaphore.tryAcquire(TILE_RENDER_ACQUIRE_TIMEOUT_MS, TimeUnit.MILLISECONDS);
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
     }
-    if (!acquired) {
-      tileBusyRejectCount.incrementAndGet();
-      Headers headers = exchange.getResponseHeaders();
-      headers.set("Retry-After", "1");
-      exchange.sendResponseHeaders(429, -1);
-      exchange.close();
-      return;
+    if (acquired) {
+      return true;
     }
+    tileBusyRejectCount.incrementAndGet();
+    Headers headers = exchange.getResponseHeaders();
+    headers.set("Retry-After", "1");
+    exchange.sendResponseHeaders(429, -1);
+    exchange.close();
+    return false;
+  }
 
-    try {
-      // Fast path: serve exact pre-cut tile bytes without extra decode/encode work.
-      if (accessMode == TileAccessMode.FAST_PRECUT
-          && sampleStep == 1
-          && precutTile != null
-          && Files.isRegularFile(precutTile)) {
-        byte[] bytes = Files.readAllBytes(precutTile);
-        putCachedTile(cacheKey, bytes);
-        writeBody(exchange, 200, "image/png", bytes);
-        return;
-      }
-
-      BufferedImage tile = null;
-      // NOTE:
-      // These branches are intentionally isolated. Do not merge them into one generic
-      // loader.
-      // Keeping separation makes it clear which code path may touch the large PNG
-      // file.
-      switch (accessMode) {
-        case AUTO_LOD_PRECUT:
-          // Auto LOD path: compose from low-quality pre-cut tiles only.
-          tile = readAutoLodTileFromPrecut(
-              currentImage,
-              tileX,
-              tileY,
-              requestedSize,
-              sampleStep,
-              mapWidth,
-              mapHeight);
-          break;
-        case MANUAL_LARGE_CROP:
-          // Manual large-map path: explicit operator choice only (`manual=1`).
-          // This keeps legacy capability for diagnostics/maintenance.
-          tile = readManualLargeMapTile(
-              exchange,
-              currentImage,
-              tileX,
-              tileY,
-              requestedSize,
-              sampleStep,
-              mapWidth,
-              mapHeight);
-          if (tile == null) {
-            return;
-          }
-          break;
-        case FAST_PRECUT:
-        default:
-          // Default fast path: only from pre-cut tile files.
-          if (sampleStep == 1 && precutTile != null && Files.isRegularFile(precutTile)) {
-            tile = ImageIO.read(precutTile.toFile());
-          }
-          break;
-      }
-      if (tile == null) {
-        exchange.sendResponseHeaders(404, -1);
-        exchange.close();
-        return;
-      }
-
-      int tileWidth = Math.max(1, tile.getWidth());
-      int tileHeight = Math.max(1, tile.getHeight());
-      ByteArrayOutputStream out = new ByteArrayOutputStream(Math.max(4096, tileWidth * tileHeight / 2));
-      ImageIO.write(tile, "png", out);
-      byte[] bytes = out.toByteArray();
-      putCachedTile(cacheKey, bytes);
-      writeBody(exchange, 200, "image/png", bytes);
-    } finally {
-      tileRenderSemaphore.release();
+  private BufferedImage loadTileForRequest(TileRequest request) throws IOException {
+    switch (request.accessMode) {
+      case AUTO_LOD_PRECUT:
+        return readAutoLodTileFromPrecut(
+            request.currentImage,
+            request.tileX,
+            request.tileY,
+            request.requestedSize,
+            request.sampleStep,
+            request.mapWidth,
+            request.mapHeight);
+      case MANUAL_LARGE_CROP:
+        return readManualLargeMapTile(
+            request.currentImage,
+            request.tileX,
+            request.tileY,
+            request.requestedSize,
+            request.sampleStep,
+            request.mapWidth,
+            request.mapHeight);
+      case FAST_PRECUT:
+      default:
+        if (request.sampleStep == 1 && request.precutTile != null && Files.isRegularFile(request.precutTile)) {
+          return ImageIO.read(request.precutTile.toFile());
+        }
+        return null;
     }
+  }
+
+  private static byte[] encodeTilePng(BufferedImage tile) throws IOException {
+    int tileWidth = Math.max(1, tile.getWidth());
+    int tileHeight = Math.max(1, tile.getHeight());
+    ByteArrayOutputStream out = new ByteArrayOutputStream(Math.max(4096, tileWidth * tileHeight / 2));
+    ImageIO.write(tile, "png", out);
+    return out.toByteArray();
+  }
+
+  private static void sendNotFound(HttpExchange exchange) throws IOException {
+    exchange.sendResponseHeaders(404, -1);
+    exchange.close();
   }
 
   /**
@@ -1822,10 +1929,9 @@ final class HttpPreviewServer {
 
   /**
    * Manual path only: reads a region from the large map image.
-   * Returns null and writes 404 when source image is not available.
+   * Returns null when source image is unavailable.
    */
   private BufferedImage readManualLargeMapTile(
-      HttpExchange exchange,
       Path currentImage,
       int tileX,
       int tileY,
@@ -1834,8 +1940,6 @@ final class HttpPreviewServer {
       int mapWidth,
       int mapHeight) throws IOException {
     if (currentImage == null || !Files.isRegularFile(currentImage)) {
-      exchange.sendResponseHeaders(404, -1);
-      exchange.close();
       return null;
     }
     int tileMapWidth = Math.min(mapWidth - tileX, requestedSize * sampleStep);
@@ -2222,6 +2326,7 @@ final class HttpPreviewServer {
         + "\"gameTimeTicks\":" + currentGameTimeTicks + ","
         + "\"dayPhase\":\"" + jsonEscape(dayPhase) + "\","
         + "\"unknownFogEnabled\":" + unknownFogEnabled + ","
+        // Deprecated stats fields kept for compatibility with legacy dashboards.
         + "\"chunkBoundaryEnabled\":" + chunkBoundaryEnabled + ","
         + "\"chunkPixelSize\":" + chunkPixelSize + ","
         + "\"predictiveStartupEnabled\":" + predictiveStartupEnabled + ","
@@ -2233,6 +2338,7 @@ final class HttpPreviewServer {
         + "\"maskFile\":\"" + jsonEscape(maskPath == null ? "" : maskPath.getFileName().toString()) + "\","
         + "\"emptyColor\":\"" + jsonEscape(emptyColorHex) + "\","
         + "\"fogDisabledColor\":\"" + jsonEscape(fogDisabledColorHex) + "\","
+        // Deprecated compatibility field. Renderer/frontend no longer uses boundary color.
         + "\"chunkBoundaryColor\":\"" + jsonEscape(chunkBoundaryColorHex) + "\""
         + "}";
     writeBody(exchange, 200, "application/json; charset=utf-8", json.getBytes(StandardCharsets.UTF_8));
@@ -2246,7 +2352,7 @@ final class HttpPreviewServer {
     }
     Map<String, String> q = parseQuery(exchange.getRequestURI().getRawQuery());
     boolean force = parseBoolean(q.get("force"), false);
-    String message = renderAction == null ? "render action not configured" : renderAction.apply(force);
+    String message = renderAction == null ? "渲染动作未配置" : renderAction.apply(force);
     String json = "{\"ok\":true,\"message\":\"" + jsonEscape(message) + "\"}";
     writeBody(exchange, 200, "application/json; charset=utf-8", json.getBytes(StandardCharsets.UTF_8));
   }
@@ -2261,11 +2367,11 @@ final class HttpPreviewServer {
     Boolean enabled = parseBooleanNullable(q.get("enabled"));
     Long interval = parseLongNullable(q.get("interval"));
     if (enabled == null && interval == null) {
-      String json = "{\"ok\":false,\"message\":\"missing enabled/interval\"}";
+      String json = "{\"ok\":false,\"message\":\"缺少 enabled 或 interval 参数\"}";
       writeBody(exchange, 400, "application/json; charset=utf-8", json.getBytes(StandardCharsets.UTF_8));
       return;
     }
-    String message = autoAction == null ? "auto action not configured" : autoAction.apply(enabled, interval);
+    String message = autoAction == null ? "自动动作未配置" : autoAction.apply(enabled, interval);
     String json = "{\"ok\":true,\"message\":\"" + jsonEscape(message) + "\"}";
     writeBody(exchange, 200, "application/json; charset=utf-8", json.getBytes(StandardCharsets.UTF_8));
   }
@@ -2280,11 +2386,11 @@ final class HttpPreviewServer {
     String name = q.get("name");
     Boolean enabled = parseBooleanNullable(q.get("enabled"));
     if (name == null || name.isBlank() || enabled == null) {
-      String json = "{\"ok\":false,\"message\":\"missing name/enabled\"}";
+      String json = "{\"ok\":false,\"message\":\"缺少 name 或 enabled 参数\"}";
       writeBody(exchange, 400, "application/json; charset=utf-8", json.getBytes(StandardCharsets.UTF_8));
       return;
     }
-    String message = visualAction == null ? "visual action not configured" : visualAction.apply(name, enabled);
+    String message = visualAction == null ? "视觉动作未配置" : visualAction.apply(name, enabled);
     String json = "{\"ok\":true,\"message\":\"" + jsonEscape(message) + "\"}";
     writeBody(exchange, 200, "application/json; charset=utf-8", json.getBytes(StandardCharsets.UTF_8));
   }
@@ -2298,12 +2404,12 @@ final class HttpPreviewServer {
     Map<String, String> q = parseQuery(exchange.getRequestURI().getRawQuery());
     Long edgeRaw = parseLongNullable(q.get("edge"));
     if (edgeRaw == null) {
-      String json = "{\"ok\":false,\"message\":\"missing edge\"}";
+      String json = "{\"ok\":false,\"message\":\"缺少 edge 参数\"}";
       writeBody(exchange, 400, "application/json; charset=utf-8", json.getBytes(StandardCharsets.UTF_8));
       return;
     }
     int edge = (int) Math.max(1L, Math.min(1024L, edgeRaw));
-    String message = qualityAction == null ? "quality action not configured" : qualityAction.apply(edge);
+    String message = qualityAction == null ? "画质动作未配置" : qualityAction.apply(edge);
     String json = "{\"ok\":true,\"message\":\"" + jsonEscape(message) + "\"}";
     writeBody(exchange, 200, "application/json; charset=utf-8", json.getBytes(StandardCharsets.UTF_8));
   }
@@ -2357,6 +2463,43 @@ final class HttpPreviewServer {
   private void clearTileCache() {
     synchronized (tileCacheLock) {
       tilePngCache.clear();
+    }
+  }
+
+  private static final class TileRequest {
+    private final Path currentImage;
+    private final Path precutTile;
+    private final TileAccessMode accessMode;
+    private final int tileX;
+    private final int tileY;
+    private final int requestedSize;
+    private final int sampleStep;
+    private final int mapWidth;
+    private final int mapHeight;
+    private final String cacheKey;
+
+    private TileRequest(
+        Path currentImage,
+        Path precutTile,
+        TileAccessMode accessMode,
+        int tileX,
+        int tileY,
+        int requestedSize,
+        int sampleStep,
+        int mapWidth,
+        int mapHeight,
+        String cacheKey
+    ) {
+      this.currentImage = currentImage;
+      this.precutTile = precutTile;
+      this.accessMode = accessMode;
+      this.tileX = tileX;
+      this.tileY = tileY;
+      this.requestedSize = requestedSize;
+      this.sampleStep = sampleStep;
+      this.mapWidth = mapWidth;
+      this.mapHeight = mapHeight;
+      this.cacheKey = cacheKey;
     }
   }
 
@@ -2454,7 +2597,7 @@ final class HttpPreviewServer {
 
   private static String formatGameTimeStopwatch(long ticks) {
     if (ticks < 0L) {
-      return "n/a";
+      return "未知";
     }
     long totalSeconds = Math.max(0L, ticks / 20L);
     long days = totalSeconds / 86_400L;
@@ -2462,7 +2605,7 @@ final class HttpPreviewServer {
     long minutes = (totalSeconds % 3_600L) / 60L;
     long seconds = totalSeconds % 60L;
     String time = String.format("%02d:%02d:%02d", hours, minutes, seconds);
-    return days > 0L ? (days + "d " + time) : time;
+    return days > 0L ? (days + "天 " + time) : time;
   }
 
   private static String escape(String raw) {
@@ -2502,3 +2645,7 @@ final class HttpPreviewServer {
     return (0xFF << 24) | (r << 16) | (g << 8) | b;
   }
 }
+
+
+
+

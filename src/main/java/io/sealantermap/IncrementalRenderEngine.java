@@ -64,6 +64,8 @@ final class IncrementalRenderEngine {
     private final int filledRgb;
     private final boolean unknownFogEnabled;
     private final int fogDisabledRgb;
+    // Deprecated compatibility fields:
+    // retained in constructor/config pipeline, but boundary rendering is retired.
     private final boolean chunkBoundaryEnabled;
     private final int chunkBoundaryRgb;
     private final Logger logger;
@@ -111,6 +113,9 @@ final class IncrementalRenderEngine {
     private int startupWindowMinChunkZ = 0;
     private int startupWindowMaxChunkZ = 0;
     private BufferedImage startupPredictionCanvas;
+    // Only true while building the startup baseline render pass.
+    // Prevents predictive colors from leaking into steady-state incremental/full renders.
+    private boolean predictiveSamplingActive = false;
 
     private WatchService watchService;
     private Thread watchThread;
@@ -197,6 +202,8 @@ final class IncrementalRenderEngine {
         this.filledRgb = filledColor.getRGB();
         this.unknownFogEnabled = unknownFogEnabled;
         this.fogDisabledRgb = fogDisabledColor.getRGB();
+        // Boundary settings are carried for backward-compatible config/schema handling only.
+        // Engine render path no longer consumes these values.
         this.chunkBoundaryEnabled = chunkBoundaryEnabled;
         this.chunkBoundaryRgb = chunkBoundaryColor.getRGB();
         this.logger = logger;
@@ -205,9 +212,19 @@ final class IncrementalRenderEngine {
         int maxY = world.getMaxHeight() - 1;
         int seaY = world.getSeaLevel();
         this.biomeSampleY = Math.min(maxY, Math.max(minY, seaY));
-        this.texturePalette = texturePaletteEnabled
-                ? TextureColorPalette.load(logger, minecraftJarPath)
-                : Map.of();
+        /*
+         * Texture palette is fixed ON in current pipeline.
+         *
+         * We keep the constructor parameter for backward compatibility with existing
+         * call sites/config schema, but runtime no longer supports a disabled palette
+         * mode because it causes color-style drift between sessions.
+         *
+         * Legacy disabled branch (kept here as migration note):
+         * this.texturePalette = texturePaletteEnabled
+         *         ? TextureColorPalette.load(logger, minecraftJarPath)
+         *         : Map.of();
+         */
+        this.texturePalette = TextureColorPalette.load(logger, minecraftJarPath);
     }
 
     RenderSnapshot renderStartupBaseline(String reason) throws Exception {
@@ -216,62 +233,69 @@ final class IncrementalRenderEngine {
         }
 
         synchronized (lock) {
-            canvasWidthPixels = 0;
-            canvasHeightPixels = 0;
-            regions.clear();
-            chunkCount = 0L;
+            predictiveSamplingActive = predictiveStartupEnabled;
+            try {
+                canvasWidthPixels = 0;
+                canvasHeightPixels = 0;
+                regions.clear();
+                chunkCount = 0L;
 
-            Location spawn = world.getSpawnLocation();
-            int centerChunkX = spawn.getBlockX() >> 4;
-            int centerChunkZ = spawn.getBlockZ() >> 4;
-            int half = Math.max(1, startupWindowChunks / 2);
-            int windowMinX = centerChunkX - half;
-            int windowMaxX = centerChunkX + half - 1;
-            int windowMinZ = centerChunkZ - half;
-            int windowMaxZ = centerChunkZ + half - 1;
+                Location spawn = world.getSpawnLocation();
+                int centerChunkX = spawn.getBlockX() >> 4;
+                int centerChunkZ = spawn.getBlockZ() >> 4;
+                int half = Math.max(1, startupWindowChunks / 2);
+                int windowMinX = centerChunkX - half;
+                int windowMaxX = centerChunkX + half - 1;
+                int windowMinZ = centerChunkZ - half;
+                int windowMaxZ = centerChunkZ + half - 1;
 
-            startupWindowLocked = true;
-            startupWindowMinChunkX = windowMinX;
-            startupWindowMaxChunkX = windowMaxX;
-            startupWindowMinChunkZ = windowMinZ;
-            startupWindowMaxChunkZ = windowMaxZ;
+                startupWindowLocked = true;
+                startupWindowMinChunkX = windowMinX;
+                startupWindowMaxChunkX = windowMaxX;
+                startupWindowMinChunkZ = windowMinZ;
+                startupWindowMaxChunkZ = windowMaxZ;
 
-            minChunkX = windowMinX;
-            maxChunkX = windowMaxX;
-            minChunkZ = windowMinZ;
-            maxChunkZ = windowMaxZ;
+                minChunkX = windowMinX;
+                maxChunkX = windowMaxX;
+                minChunkZ = windowMinZ;
+                maxChunkZ = windowMaxZ;
 
-            startupPredictionCanvas = usePredictiveStartupLayer() ? buildPredictiveCanvasForCurrentBounds() : null;
-            canvas = startupPredictionCanvas != null ? copyImage(startupPredictionCanvas) : createBackgroundCanvasForCurrentBounds();
-            rememberCanvasMetrics(canvas);
+                startupPredictionCanvas = shouldBuildStartupPredictionLayer()
+                        ? buildPredictiveCanvasForCurrentBounds()
+                        : null;
+                canvas = startupPredictionCanvas != null ? copyImage(startupPredictionCanvas) : createBackgroundCanvasForCurrentBounds();
+                rememberCanvasMetrics(canvas);
 
-            try (DirectoryStream<Path> stream = Files.newDirectoryStream(regionDir, "*.mca")) {
-                for (Path file : stream) {
-                    RegionState raw = loadRegionFromDisk(file);
-                    if (raw == null || raw.chunkCount == 0) {
-                        continue;
+                try (DirectoryStream<Path> stream = Files.newDirectoryStream(regionDir, "*.mca")) {
+                    for (Path file : stream) {
+                        RegionState raw = loadRegionFromDisk(file);
+                        if (raw == null || raw.chunkCount == 0) {
+                            continue;
+                        }
+                        BitSet clipped = clipChunksToWindow(raw.regionX, raw.regionZ, raw.chunks, windowMinX, windowMaxX, windowMinZ, windowMaxZ);
+                        int clippedCount = clipped.cardinality();
+                        if (clippedCount == 0) {
+                            continue;
+                        }
+
+                        RegionState state = new RegionState(raw.regionX, raw.regionZ, clipped, clippedCount, raw.fileSize, raw.lastModifiedMs);
+                        regions.put(packKey(state.regionX, state.regionZ), state);
+                        chunkCount += state.chunkCount;
+                        drawRegion(canvas, state);
                     }
-                    BitSet clipped = clipChunksToWindow(raw.regionX, raw.regionZ, raw.chunks, windowMinX, windowMaxX, windowMinZ, windowMaxZ);
-                    int clippedCount = clipped.cardinality();
-                    if (clippedCount == 0) {
-                        continue;
-                    }
-
-                    RegionState state = new RegionState(raw.regionX, raw.regionZ, clipped, clippedCount, raw.fileSize, raw.lastModifiedMs);
-                    regions.put(packKey(state.regionX, state.regionZ), state);
-                    chunkCount += state.chunkCount;
-                    drawRegion(canvas, state);
                 }
+                writeCanvasToDisk(null);
+                initialized = true;
+                forceRebuild = false;
+                pendingRegionFiles.clear();
+                refreshSaveMeta();
+                renderCount++;
+                String mode = startupPredictionCanvas != null ? "predictive" : "fog-mask";
+                releaseRenderBuffers();
+                return snapshot("ok", reason, "startup " + mode + " baseline " + startupWindowChunks + "x" + startupWindowChunks + " chunks");
+            } finally {
+                predictiveSamplingActive = false;
             }
-            writeCanvasToDisk(null);
-            initialized = true;
-            forceRebuild = false;
-            pendingRegionFiles.clear();
-            refreshSaveMeta();
-            renderCount++;
-            String mode = startupPredictionCanvas != null ? "predictive" : "fog-mask";
-            releaseRenderBuffers();
-            return snapshot("ok", reason, "startup " + mode + " baseline " + startupWindowChunks + "x" + startupWindowChunks + " chunks");
         }
     }
 
@@ -313,6 +337,13 @@ final class IncrementalRenderEngine {
         }
     }
 
+    /**
+     * Legacy full render entry.
+     *
+     * This path clears in-memory region state, rescans all region files and rebuilds
+     * the whole canvas in one call. It is kept for bootstrap and fallback scenarios
+     * where incremental assumptions are no longer trustworthy.
+     */
     RenderSnapshot renderFull(String reason) throws Exception {
         synchronized (lock) {
             canvasWidthPixels = 0;
@@ -396,6 +427,17 @@ final class IncrementalRenderEngine {
         }
     }
 
+    /**
+     * Step-based full render state machine.
+     *
+     * The caller provides two budgets:
+     * - {@code maxRegionsPerStep}: upper bound of drawable work units in this tick
+     * - {@code maxMillisPerStep}: wall-clock guard to prevent long single-step stalls
+     *
+     * The method advances the session phase in order:
+     * SCANNING -> PREPARE_CANVAS -> DRAWING -> FINALIZING -> DONE.
+     * It may exit early when either budget is exhausted and return a progress snapshot.
+     */
     FullRenderStepResult stepFullRenderSession(
             FullRenderSession session,
             int maxRegionsPerStep,
@@ -438,6 +480,12 @@ final class IncrementalRenderEngine {
         }
     }
 
+    /**
+     * Scan one region file and update aggregate bounds/counters.
+     *
+     * Returns consumed work units (0/1). When all files are scanned the phase is
+     * transitioned to PREPARE_CANVAS.
+     */
     private int stepScanPhase(FullRenderSession session) throws IOException {
         if (session.scanIndex >= session.totalFiles()) {
             session.phase = FullRenderSession.Phase.PREPARE_CANVAS;
@@ -485,9 +533,29 @@ final class IncrementalRenderEngine {
         maxChunkZ = session.localMaxZ;
         canvasWidthPixels = Math.max(1, (maxChunkX - minChunkX + 1) * pixelSize);
         canvasHeightPixels = Math.max(1, (maxChunkZ - minChunkZ + 1) * pixelSize);
+        /*
+         * Prime tile canvas for the entire current bounds before region overlays.
+         *
+         * Why:
+         * 1) Step-based full render writes region tiles progressively and does not keep one
+         *    giant in-memory image. Without prefill, areas without region files can remain
+         *    missing in tile output.
+         * 2) Unknown-fog OFF should still show baseline map content (predictive/base color)
+         *    instead of blank viewer background.
+         * 3) Region flush phase only needs to overwrite persisted-chunk areas on top of this
+         *    baseline, preserving incremental write behavior.
+         */
+        prefillPrecutTilesForCurrentBounds();
         session.phase = FullRenderSession.Phase.DRAWING;
     }
 
+    /**
+     * Draw as many chunks as allowed by remaining budget and deadline.
+     *
+     * This is intentionally chunk-budgeted so large worlds do not block a single
+     * scheduler cycle. The caller is expected to invoke this method repeatedly until
+     * session phase reaches FINALIZING.
+     */
     private int stepDrawingPhase(FullRenderSession session, int remainingBudget, long deadlineNanos) throws IOException {
         if (remainingBudget <= 0) {
             return 0;
@@ -521,6 +589,9 @@ final class IncrementalRenderEngine {
         return consumed;
     }
 
+    /**
+     * Persist the rebuilt canvas and publish final snapshot.
+     */
     private FullRenderStepResult stepFinalizingPhase(FullRenderSession session) throws IOException {
         if (session.activeRegionCanvas != null) {
             flushActiveRegionCanvasToTiles(session);
@@ -538,6 +609,18 @@ final class IncrementalRenderEngine {
         return new FullRenderStepResult(true, snapshot("ok", session.reason, "full render complete"));
     }
 
+    /**
+     * Incremental render entry.
+     *
+     * Decision order:
+     * 1) Bootstrap to full render if engine is not initialized.
+     * 2) Skip when no pending region changes and no forced rebuild.
+     * 3) Process changed region files and classify each change as:
+     *    - no-op
+     *    - patchable dirty rectangle update
+     *    - rebuild-required change
+     * 4) Execute either partial patch write or full canvas rebuild.
+     */
     RenderSnapshot renderIncremental(String reason) throws Exception {
         synchronized (lock) {
             if (!initialized) {
@@ -612,6 +695,15 @@ final class IncrementalRenderEngine {
         }
     }
 
+    /**
+     * Convert one changed region filename into an incremental action.
+     *
+     * Contract:
+     * - invalid filename -> ignored()
+     * - no effective chunk diff -> unchanged()
+     * - bounds/topology sensitive change -> rebuild()
+     * - in-bounds content diff -> patched(PixelRect)
+     */
     private IncrementalChangeResult processChangedRegion(String fileName) throws Exception {
         RegionCoord coord = parseRegionFileName(fileName);
         if (coord == null) {
@@ -668,6 +760,12 @@ final class IncrementalRenderEngine {
         }
     }
 
+    /**
+     * Region directory watch loop.
+     *
+     * Any overflow/invalid watch key is treated as potential event loss and escalated
+     * to {@code forceRebuild=true}. This keeps correctness over opportunistic patching.
+     */
     private void watchLoop() {
         while (watchRunning) {
             try {
@@ -777,8 +875,15 @@ final class IncrementalRenderEngine {
         hash = mix(hash, region.lastModifiedMs);
         hash = mix(hash, region.chunks.hashCode());
         hash = mix(hash, pixelSize);
-        hash = mix(hash, chunkBoundaryEnabled ? 1L : 0L);
-        hash = mix(hash, chunkBoundaryRgb);
+        /*
+         * Chunk-boundary overlay is retired. Signature intentionally ignores boundary
+         * toggle/color so deprecated config values do not trigger unnecessary raster
+         * cache churn.
+         *
+         * Legacy lines kept here as documentation:
+         * hash = mix(hash, chunkBoundaryEnabled ? 1L : 0L);
+         * hash = mix(hash, chunkBoundaryRgb);
+         */
         hash = mix(hash, predictiveStartupEnabled ? 1L : 0L);
         hash = mix(hash, texturePaletteEnabled ? 1L : 0L);
         hash = mix(hash, predictorSalt);
@@ -962,6 +1067,30 @@ final class IncrementalRenderEngine {
         return predicted;
     }
 
+    private boolean shouldUsePredictiveBaseCanvas() {
+        return predictiveStartupEnabled;
+    }
+
+    private void fillPredictedRegionOnCanvas(
+            BufferedImage image,
+            int pixelStartX,
+            int pixelStartZ,
+            int regionX,
+            int regionZ
+    ) {
+        int regionMinChunkX = regionX * CHUNKS_PER_REGION_EDGE;
+        int regionMinChunkZ = regionZ * CHUNKS_PER_REGION_EDGE;
+        for (int localZ = 0; localZ < CHUNKS_PER_REGION_EDGE; localZ++) {
+            int chunkZ = regionMinChunkZ + localZ;
+            for (int localX = 0; localX < CHUNKS_PER_REGION_EDGE; localX++) {
+                int chunkX = regionMinChunkX + localX;
+                int px = pixelStartX + (localX * pixelSize);
+                int pz = pixelStartZ + (localZ * pixelSize);
+                drawUniformChunkCell(image, px, pz, predictChunkColor(chunkX, chunkZ));
+            }
+        }
+    }
+
     private void restoreRectFromPrediction(int x, int z, int width, int height) {
         if (canvas == null || startupPredictionCanvas == null) {
             return;
@@ -1040,10 +1169,14 @@ final class IncrementalRenderEngine {
         if (startupPredictionCanvas != null) {
             restoreRectFromPrediction(pixelX, pixelZ, regionPixels, regionPixels);
         } else {
-            Graphics2D g = canvas.createGraphics();
-            g.setColor(new Color(backgroundRgb(), false));
-            g.fillRect(pixelX, pixelZ, regionPixels, regionPixels);
-            g.dispose();
+            if (shouldUsePredictiveBaseCanvas()) {
+                fillPredictedRegionOnCanvas(canvas, pixelX, pixelZ, target.regionX, target.regionZ);
+            } else {
+                Graphics2D g = canvas.createGraphics();
+                g.setColor(new Color(backgroundRgb(), false));
+                g.fillRect(pixelX, pixelZ, regionPixels, regionPixels);
+                g.dispose();
+            }
         }
 
         if (newState != null) {
@@ -1106,13 +1239,16 @@ final class IncrementalRenderEngine {
         int heightChunks = maxChunkZ - minChunkZ + 1;
         int widthPixels = Math.max(1, widthChunks * pixelSize);
         int heightPixels = Math.max(1, heightChunks * pixelSize);
-        canvas = new BufferedImage(widthPixels, heightPixels, BufferedImage.TYPE_INT_RGB);
+        if (shouldUsePredictiveBaseCanvas()) {
+            canvas = buildPredictiveCanvasForCurrentBounds();
+        } else {
+            canvas = new BufferedImage(widthPixels, heightPixels, BufferedImage.TYPE_INT_RGB);
+            Graphics2D g = canvas.createGraphics();
+            g.setColor(new Color(backgroundRgb(), false));
+            g.fillRect(0, 0, widthPixels, heightPixels);
+            g.dispose();
+        }
         rememberCanvasMetrics(canvas);
-
-        Graphics2D g = canvas.createGraphics();
-        g.setColor(new Color(backgroundRgb(), false));
-        g.fillRect(0, 0, widthPixels, heightPixels);
-        g.dispose();
 
         for (RegionState state : regions.values()) {
             drawRegion(canvas, state);
@@ -1146,15 +1282,31 @@ final class IncrementalRenderEngine {
         }
         int regionPixels = CHUNKS_PER_REGION_EDGE * pixelSize;
         session.activeRegionCanvas = new BufferedImage(regionPixels, regionPixels, BufferedImage.TYPE_INT_RGB);
-        Graphics2D g = session.activeRegionCanvas.createGraphics();
-        g.setColor(new Color(backgroundRgb(), false));
-        g.fillRect(0, 0, regionPixels, regionPixels);
-        BufferedImage cachedRegion = getCachedRegionRasterIfFresh(session.activeDrawRegion);
-        if (cachedRegion != null) {
-            g.drawImage(cachedRegion, 0, 0, null);
-            session.activeDrawChunkBit = -1;
+        if (shouldUsePredictiveBaseCanvas()) {
+            /*
+             * Predictive base mode:
+             * region buffer starts from prediction, then persisted chunks are drawn on top.
+             * We intentionally skip cached raster fast-path because cached unknown cells
+             * encode plain background and would overwrite predicted terrain.
+             */
+            fillPredictedRegionOnCanvas(
+                    session.activeRegionCanvas,
+                    0,
+                    0,
+                    session.activeDrawRegion.regionX,
+                    session.activeDrawRegion.regionZ
+            );
+        } else {
+            Graphics2D g = session.activeRegionCanvas.createGraphics();
+            g.setColor(new Color(backgroundRgb(), false));
+            g.fillRect(0, 0, regionPixels, regionPixels);
+            BufferedImage cachedRegion = getCachedRegionRasterIfFresh(session.activeDrawRegion);
+            if (cachedRegion != null) {
+                g.drawImage(cachedRegion, 0, 0, null);
+                session.activeDrawChunkBit = -1;
+            }
+            g.dispose();
         }
-        g.dispose();
 
         int regionMinChunkX = session.activeDrawRegion.regionX * CHUNKS_PER_REGION_EDGE;
         int regionMinChunkZ = session.activeDrawRegion.regionZ * CHUNKS_PER_REGION_EDGE;
@@ -1247,6 +1399,65 @@ final class IncrementalRenderEngine {
         }
     }
 
+    private void prefillPrecutTilesForCurrentBounds() throws IOException {
+        int width = Math.max(1, canvasWidthPixels);
+        int height = Math.max(1, canvasHeightPixels);
+        for (int tileZ = 0; tileZ < height; tileZ += PRECUT_TILE_SIZE) {
+            int tileHeight = Math.min(PRECUT_TILE_SIZE, height - tileZ);
+            for (int tileX = 0; tileX < width; tileX += PRECUT_TILE_SIZE) {
+                int tileWidth = Math.min(PRECUT_TILE_SIZE, width - tileX);
+                BufferedImage tile = new BufferedImage(tileWidth, tileHeight, BufferedImage.TYPE_INT_RGB);
+                if (shouldUsePredictiveBaseCanvas()) {
+                    paintPredictiveTileBaseline(tile, tileX, tileZ);
+                } else {
+                    Graphics2D g = tile.createGraphics();
+                    g.setColor(new Color(backgroundRgb(), false));
+                    g.fillRect(0, 0, tileWidth, tileHeight);
+                    g.dispose();
+                }
+                writeImageAtomic(tile, tileFilePath(tileX, tileZ));
+            }
+        }
+    }
+
+    private void paintPredictiveTileBaseline(BufferedImage tile, int tilePixelX, int tilePixelZ) {
+        int tileWidth = tile.getWidth();
+        int tileHeight = tile.getHeight();
+        if (tileWidth <= 0 || tileHeight <= 0) {
+            return;
+        }
+        int step = Math.max(1, pixelSize);
+        int chunkStartX = minChunkX + Math.floorDiv(tilePixelX, step);
+        int chunkEndX = minChunkX + Math.floorDiv(tilePixelX + tileWidth - 1, step);
+        int chunkStartZ = minChunkZ + Math.floorDiv(tilePixelZ, step);
+        int chunkEndZ = minChunkZ + Math.floorDiv(tilePixelZ + tileHeight - 1, step);
+
+        for (int chunkZ = chunkStartZ; chunkZ <= chunkEndZ; chunkZ++) {
+            int chunkTop = (chunkZ - minChunkZ) * step;
+            int chunkBottom = chunkTop + step;
+            int localTop = Math.max(0, chunkTop - tilePixelZ);
+            int localBottom = Math.min(tileHeight, chunkBottom - tilePixelZ);
+            if (localBottom <= localTop) {
+                continue;
+            }
+            for (int chunkX = chunkStartX; chunkX <= chunkEndX; chunkX++) {
+                int chunkLeft = (chunkX - minChunkX) * step;
+                int chunkRight = chunkLeft + step;
+                int localLeft = Math.max(0, chunkLeft - tilePixelX);
+                int localRight = Math.min(tileWidth, chunkRight - tilePixelX);
+                if (localRight <= localLeft) {
+                    continue;
+                }
+                int rgb = predictChunkColor(chunkX, chunkZ);
+                for (int y = localTop; y < localBottom; y++) {
+                    for (int x = localLeft; x < localRight; x++) {
+                        tile.setRGB(x, y, rgb);
+                    }
+                }
+            }
+        }
+    }
+
     private static void fillBlock(BufferedImage image, int x, int z, int size, int rgb) {
         for (int dz = 0; dz < size; dz++) {
             for (int dx = 0; dx < size; dx++) {
@@ -1269,26 +1480,18 @@ final class IncrementalRenderEngine {
         writeDetailedChunkPixels(image, x, z, colors);
     }
 
+    @SuppressWarnings("unused")
     private void drawChunkBoundaryOverlay(BufferedImage image, int x, int z) {
-        int max = pixelSize - 1;
-        int thickness = pixelSize >= 10 ? 2 : 1;
-        for (int t = 0; t < thickness; t++) {
-            int left = x + t;
-            int right = x + max - t;
-            int top = z + t;
-            int bottom = z + max - t;
-            if (left > right || top > bottom) {
-                break;
-            }
-            for (int i = left; i <= right; i++) {
-                image.setRGB(i, top, blendBoundaryOverlay(image.getRGB(i, top)));
-                image.setRGB(i, bottom, blendBoundaryOverlay(image.getRGB(i, bottom)));
-            }
-            for (int i = top; i <= bottom; i++) {
-                image.setRGB(left, i, blendBoundaryOverlay(image.getRGB(left, i)));
-                image.setRGB(right, i, blendBoundaryOverlay(image.getRGB(right, i)));
-            }
-        }
+        /*
+         * Retired implementation note:
+         * - Older versions blended a vivid border around each chunk cell directly into the
+         *   rendered image.
+         * - This caused zoom-level inconsistencies and high-frequency visual noise.
+         * - The boundary feature is now frontend-removed and backend-disabled.
+         *
+         * Method intentionally left as a no-op (instead of deletion) to preserve clear
+         * migration history and make deprecation intent explicit in code review.
+         */
     }
 
     private int[] drawDetailedChunkPixels(int chunkX, int chunkZ) {
@@ -1364,36 +1567,15 @@ final class IncrementalRenderEngine {
         return Math.max(0, Math.min(15, local));
     }
 
+    @SuppressWarnings("unused")
     private int blendBoundaryOverlay(int baseRgb) {
-        int vividBoundary = vividizeColor(chunkBoundaryRgb);
-        int screen = screenRgb(baseRgb, vividBoundary);
-        // Keep it vivid and obvious while preserving terrain readability.
-        int mixed = blendRgb(screen, vividBoundary, 0.35f);
-        return boostRgb(mixed, 1.18f, 1.06f);
-    }
-
-    private static int screenRgb(int a, int b) {
-        int ar = (a >> 16) & 0xFF;
-        int ag = (a >> 8) & 0xFF;
-        int ab = a & 0xFF;
-        int br = (b >> 16) & 0xFF;
-        int bg = (b >> 8) & 0xFF;
-        int bb = b & 0xFF;
-        return rgb(
-                255 - ((255 - ar) * (255 - br) / 255),
-                255 - ((255 - ag) * (255 - bg) / 255),
-                255 - ((255 - ab) * (255 - bb) / 255)
-        );
-    }
-
-    private static int vividizeColor(int color) {
-        int r = (color >> 16) & 0xFF;
-        int g = (color >> 8) & 0xFF;
-        int b = color & 0xFF;
-        float[] hsb = Color.RGBtoHSB(r, g, b, null);
-        float sat = Math.max(0.86f, hsb[1]);
-        float bri = Math.max(0.92f, hsb[2]);
-        return Color.HSBtoRGB(hsb[0], sat, bri);
+        /*
+         * Retired helper:
+         * previous logic used screen+boost blending to make chunk borders vivid.
+         * With boundary overlay retired, this helper returns the input unchanged and
+         * is kept only as migration documentation.
+         */
+        return baseRgb;
     }
 
     private int backgroundRgb() {
@@ -1401,8 +1583,12 @@ final class IncrementalRenderEngine {
         return fogDisabledRgb;
     }
 
-    private boolean usePredictiveStartupLayer() {
+    private boolean shouldBuildStartupPredictionLayer() {
         return predictiveStartupEnabled;
+    }
+
+    private boolean usePredictiveStartupLayer() {
+        return predictiveSamplingActive;
     }
 
     private int predictChunkColor(int chunkX, int chunkZ) {
@@ -1562,13 +1748,20 @@ final class IncrementalRenderEngine {
         if (cached != null) {
             return cached;
         }
-
-        if (texturePaletteEnabled) {
-            Integer fromTexture = texturePalette.get(type);
-            if (fromTexture != null) {
-                materialColorCache.put(type, fromTexture);
-                return fromTexture;
-            }
+        /*
+         * Texture palette is mandatory in current render pipeline.
+         *
+         * Legacy behavior:
+         * - enabled=true: try texture palette first
+         * - enabled=false: skip palette and use legacy heuristic only
+         *
+         * Disabled path is intentionally retired to keep map colors deterministic
+         * across restarts and avoid UI/runtime mismatch after removing the toggle.
+         */
+        Integer fromTexture = texturePalette.get(type);
+        if (fromTexture != null) {
+            materialColorCache.put(type, fromTexture);
+            return fromTexture;
         }
 
         int color = materialToRgbLegacy(type);

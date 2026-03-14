@@ -1,5 +1,7 @@
 # Sealantermap
 
+项目结构与功能映射文档见：`docs/STRUCTURE.md`
+
 Sealantermap 是一个面向 Paper 服务器的轻量地图预览插件。  
 目标是用可控的 I/O 和内存开销，在 `http://127.0.0.1:8156/` 提供可读地图预览。
 

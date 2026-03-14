@@ -27,18 +27,19 @@ visual:
     # true: chunks not persisted in region files are fully covered by empty-color
     # false: unknown area uses disabled-color
     enabled: true
-    disabled-color: "#dbeafe"
+    disabled-color: "#ffffff"
 
   chunk-boundary:
-    # Show per-chunk border overlay.
-    # Best visible when chunk-pixel-size >= 2.
+    # Deprecated: chunk boundary overlay has been removed from frontend and backend.
+    # These keys are kept only for backward compatibility with older configs/tools.
+    # Changing this value no longer affects rendering output.
     enabled: false
-    # Vivid cyan works better with overlay blending on most terrain tones.
+    # Deprecated compatibility field, currently ignored by renderer.
     color: "#00e5ff"
 
   texture-color:
-    # true: try reading vanilla texture colors from Minecraft client jar.
-    # false: use built-in legacy color heuristics only.
+    # Deprecated toggle: texture palette mode is now fixed ON at runtime.
+    # This key is kept only for backward compatibility and will be forced to true.
     enabled: true
     # Optional explicit client jar path (project-local or absolute path both work), example:
     # ./minecraft-jars/1.21.4.jar
